@@ -30,11 +30,23 @@ cuando te lo envían.
 
 ## 2. Instalación
 
-Te vamos a dar un archivo que termina en `.whl` (es el paquete de Python, listo para instalar). Guardalo en
-una carpeta, abrí una terminal **parado en esa carpeta**, y corré:
+**Opción A (la más fácil): descargá el `.whl` ya construido** desde la pestaña **Releases** de este repo
+(`simplit_board-0.1.0-py3-none-any.whl`). Guardalo en una carpeta, abrí una terminal **parado en esa
+carpeta**, y corré:
 
 ```bash
 pip install simplit_board-0.1.0-py3-none-any.whl
+```
+
+**Opción B (construirlo vos):** cloná el repo y armá el wheel (útil si querés la última versión):
+
+```bash
+git clone https://github.com/santiamoretti/simplit-board.git
+cd simplit-board
+python3 -m venv .venv && source .venv/bin/activate
+python -m pip install --upgrade pip build      # pip viejo genera "UNKNOWN-0.0.0": actualizalo sí o sí
+python -m build                                # crea dist/simplit_board-0.1.0-py3-none-any.whl
+pip install dist/simplit_board-0.1.0-py3-none-any.whl
 ```
 
 Eso instala el comando `simplit-board`. Para comprobar que quedó bien instalado:
@@ -173,3 +185,33 @@ nuevo por accidente.
 
 Requisitos técnicos: Python 3.9+. Depende de `click`, `requests`, `cryptography`, `websocket-client` y
 `coolname` (se instalan solas con el paquete).
+
+---
+
+## 7. Preparar la carpeta de estado (`bootstrap`)
+
+El agente guarda su identidad y credencial en `/var/lib/simplit`. Corré una vez:
+
+```bash
+simplit-board bootstrap
+```
+
+`bootstrap` instala lo que hace falta (Java, python3, etc.) **y crea `/var/lib/simplit` con el dueño
+correcto** (el usuario que corre el agente), así `register` y `up` funcionan **sin `sudo`** y la identidad
+nunca queda a nombre de `root`. Si usás una carpeta propia, definí `SIMPLIT_STATE_DIR` antes.
+
+> ⚠️ **No corras `register` con `sudo`.** La clave y el estado tienen que quedar bajo tu usuario, no root.
+
+---
+
+## 8. Dejarlo corriendo como servicio (systemd)
+
+`simplit-board up` corre en primer plano. Para que arranque solo y se reconecte, instalá el servicio de
+ejemplo que viene en `packaging/simplit-board.service` (ajustá `User` y la ruta del `.venv`):
+
+```bash
+sudo cp packaging/simplit-board.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now simplit-board
+sudo systemctl status simplit-board      # para ver que está corriendo
+```

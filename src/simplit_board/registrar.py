@@ -1,12 +1,17 @@
 from __future__ import annotations
+
 import time
+
 import requests
+
 from .auth import TokenProvider
+
 
 class RegistrationError(RuntimeError):
     pass
 
-def login(login_url: str, email: str, password: str, timeout: float=45.0, attempts: int=5) -> dict:
+
+def login(login_url: str, email: str, password: str, timeout: float = 45.0, attempts: int = 5) -> dict:
     """Authenticate the operator; return the auth LoginResult body. It EITHER carries a session ``token`` (no
     2FA), OR a 2FA challenge to complete: ``mfaRequired``+``mfaToken`` (already enrolled) or
     ``mfaEnrollmentRequired``+``mfaEnrollmentToken`` (first-time). The caller resolves the challenge.
@@ -18,58 +23,68 @@ def login(login_url: str, email: str, password: str, timeout: float=45.0, attemp
     delay = 3.0
     for i in range(attempts):
         try:
-            resp = requests.post(login_url, json={'email': email, 'password': password}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+            resp = requests.post(
+                login_url, json={"email": email, "password": password},
+                headers={"Content-Type": "application/json"}, timeout=timeout)
             if resp.status_code // 100 == 2:
                 body = resp.json()
-                if body.get('passwordChangeRequired') or body.get('mustChangePassword'):
-                    raise RegistrationError('this account must set a new password first — sign in on the web app once, then retry.')
+                if body.get("passwordChangeRequired") or body.get("mustChangePassword"):
+                    raise RegistrationError(
+                        "this account must set a new password first — sign in on the web app once, then retry.")
                 return body
             if resp.status_code == 429:
-                last = RegistrationError('sign-in rate-limited (HTTP 429)')
+                last = RegistrationError("sign-in rate-limited (HTTP 429)")
             elif resp.status_code // 100 == 5:
-                last = RegistrationError(f'sign-in -> HTTP {resp.status_code}: {resp.text[:160]}')
+                last = RegistrationError(f"sign-in -> HTTP {resp.status_code}: {resp.text[:160]}")
             else:
-                raise RegistrationError(f'sign-in failed: HTTP {resp.status_code} {resp.text[:160]}')
+                raise RegistrationError(f"sign-in failed: HTTP {resp.status_code} {resp.text[:160]}")
         except (requests.Timeout, requests.ConnectionError) as e:
             last = e
         if i < attempts - 1:
             time.sleep(delay)
             delay = min(delay * 1.7, 20.0)
-    raise RegistrationError(f'sign-in failed after {attempts} attempts (auth may be cold): {last}')
+    raise RegistrationError(f"sign-in failed after {attempts} attempts (auth may be cold): {last}")
 
-def mfa_verify(verify_url: str, mfa_token: str, code: str, timeout: float=45.0) -> str:
+
+def mfa_verify(verify_url: str, mfa_token: str, code: str, timeout: float = 45.0) -> str:
     """Redeem an already-enrolled 2FA login challenge with the 6-digit code (or a backup code). Returns the
     session token. A 4xx means a wrong/expired code — surfaced so the caller can re-prompt."""
-    resp = requests.post(verify_url, json={'mfaToken': mfa_token, 'code': code}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+    resp = requests.post(verify_url, json={"mfaToken": mfa_token, "code": code},
+                         headers={"Content-Type": "application/json"}, timeout=timeout)
     if resp.status_code // 100 != 2:
-        raise RegistrationError(f'2FA code rejected (HTTP {resp.status_code}) — check the 6-digit code and retry.')
-    token = resp.json().get('token')
+        raise RegistrationError(f"2FA code rejected (HTTP {resp.status_code}) — check the 6-digit code and retry.")
+    token = resp.json().get("token")
     if not token:
-        raise RegistrationError('2FA verification returned no token')
+        raise RegistrationError("2FA verification returned no token")
     return token
 
-def mfa_setup(setup_url: str, enrollment_token: str, timeout: float=45.0) -> dict:
+
+def mfa_setup(setup_url: str, enrollment_token: str, timeout: float = 45.0) -> dict:
     """Begin first-time TOTP enrollment (forced-login flow). Returns {secret, qrDataUri} — the secret is added
     to an authenticator app for manual entry (a terminal can't render the QR)."""
-    resp = requests.post(setup_url, json={'enrollmentToken': enrollment_token}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+    resp = requests.post(setup_url, json={"enrollmentToken": enrollment_token},
+                         headers={"Content-Type": "application/json"}, timeout=timeout)
     if resp.status_code // 100 != 2:
-        raise RegistrationError(f'could not start 2FA setup (HTTP {resp.status_code})')
+        raise RegistrationError(f"could not start 2FA setup (HTTP {resp.status_code})")
     return resp.json()
 
-def mfa_enroll(enroll_url: str, enrollment_token: str, code: str, timeout: float=45.0) -> dict:
+
+def mfa_enroll(enroll_url: str, enrollment_token: str, code: str, timeout: float = 45.0) -> dict:
     """Confirm the first code and activate 2FA. Returns {"token": <session token>, "backupCodes": [...]} —
     the backup codes are one-time and must be saved by the operator."""
-    resp = requests.post(enroll_url, json={'enrollmentToken': enrollment_token, 'code': code}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+    resp = requests.post(enroll_url, json={"enrollmentToken": enrollment_token, "code": code},
+                         headers={"Content-Type": "application/json"}, timeout=timeout)
     if resp.status_code // 100 != 2:
-        raise RegistrationError(f'2FA setup code rejected (HTTP {resp.status_code}) — check the code and retry.')
+        raise RegistrationError(f"2FA setup code rejected (HTTP {resp.status_code}) — check the code and retry.")
     body = resp.json()
-    session = body.get('session') or {}
-    token = session.get('token') or body.get('token')
+    session = body.get("session") or {}
+    token = session.get("token") or body.get("token")
     if not token:
-        raise RegistrationError('2FA enrollment returned no token')
-    return {'token': token, 'backupCodes': body.get('backupCodes') or []}
+        raise RegistrationError("2FA enrollment returned no token")
+    return {"token": token, "backupCodes": body.get("backupCodes") or []}
 
-def list_targets(targets_url: str, operator_token: str, timeout: float=45.0, attempts: int=5) -> list:
+
+def list_targets(targets_url: str, operator_token: str, timeout: float = 45.0, attempts: int = 5) -> list:
     """The subdivisions this board may be placed under, as [{id, name, parentId, type}]. The enrollment service
     pulls them from tenancy on its own authority (it holds readStructure over tenancy) and gates the call on the
     operator's enrollDevice. Cold-start resilient (5xx/timeout retried); a 401/403 is surfaced so the caller can
@@ -79,24 +94,31 @@ def list_targets(targets_url: str, operator_token: str, timeout: float=45.0, att
     delay = 3.0
     for i in range(attempts):
         try:
-            resp = requests.get(targets_url, headers={'Authorization': f'Bearer {operator_token}', 'Accept': 'application/json'}, timeout=timeout)
+            resp = requests.get(
+                targets_url,
+                headers={"Authorization": f"Bearer {operator_token}", "Accept": "application/json"},
+                timeout=timeout,
+            )
             if resp.status_code // 100 == 2:
                 body = resp.json()
-                return body if isinstance(body, list) else body.get('data', [])
+                return body if isinstance(body, list) else body.get("data", [])
             if resp.status_code in (401, 403):
-                raise RegistrationError(f'not authorized to list placement options (HTTP {resp.status_code})')
+                raise RegistrationError(
+                    f"not authorized to list placement options (HTTP {resp.status_code})")
             if resp.status_code // 100 == 5:
-                last = RegistrationError(f'targets -> HTTP {resp.status_code}: {resp.text[:160]}')
+                last = RegistrationError(f"targets -> HTTP {resp.status_code}: {resp.text[:160]}")
             else:
-                raise RegistrationError(f'targets -> HTTP {resp.status_code}: {resp.text[:200]}')
+                raise RegistrationError(f"targets -> HTTP {resp.status_code}: {resp.text[:200]}")
         except (requests.Timeout, requests.ConnectionError) as e:
             last = e
         if i < attempts - 1:
             time.sleep(delay)
             delay = min(delay * 1.7, 20.0)
-    raise RegistrationError(f'listing placement options failed after {attempts} attempts: {last}')
+    raise RegistrationError(f"listing placement options failed after {attempts} attempts: {last}")
 
-def enroll(enroll_url: str, operator_token: str, device_name: str, device_pub_b64: str='', parent_resource_id: str | None=None, timeout: float=60.0, attempts: int=6) -> dict:
+
+def enroll(enroll_url: str, operator_token: str, device_name: str, device_pub_b64: str = "",
+           parent_resource_id: str | None = None, timeout: float = 60.0, attempts: int = 6) -> dict:
     """Enrol the device via the engine-gated enrollment service. Returns {clientId, clientSecret, org,
     signingPubkey} — signingPubkey being the board's code-signing trust anchor, delivered in-band.
 
@@ -108,31 +130,39 @@ def enroll(enroll_url: str, operator_token: str, device_name: str, device_pub_b6
     """
     last = None
     delay = 3.0
-    body = {'deviceName': device_name, 'devicePubB64': device_pub_b64}
+    body = {"deviceName": device_name, "devicePubB64": device_pub_b64}
     if parent_resource_id:
-        body['parentResourceId'] = parent_resource_id
+        body["parentResourceId"] = parent_resource_id
     for i in range(attempts):
         try:
-            resp = requests.post(enroll_url, json=body, headers={'Authorization': f'Bearer {operator_token}', 'Content-Type': 'application/json'}, timeout=timeout)
+            resp = requests.post(
+                enroll_url,
+                json=body,
+                headers={"Authorization": f"Bearer {operator_token}", "Content-Type": "application/json"},
+                timeout=timeout,
+            )
             if resp.status_code // 100 == 2:
                 body = resp.json()
-                if not body.get('clientSecret'):
-                    raise RegistrationError('enrollment succeeded but returned no credential')
+                if not body.get("clientSecret"):
+                    raise RegistrationError("enrollment succeeded but returned no credential")
                 return body
             if resp.status_code in (401, 403):
-                raise RegistrationError(f'not authorized to enrol devices (HTTP {resp.status_code}) — your account needs the enrollDevice permission.')
+                raise RegistrationError(
+                    f"not authorized to enrol devices (HTTP {resp.status_code}) — your account needs the "
+                    "enrollDevice permission.")
             if resp.status_code // 100 == 5:
-                last = RegistrationError(f'enroll -> HTTP {resp.status_code}: {resp.text[:160]}')
+                last = RegistrationError(f"enroll -> HTTP {resp.status_code}: {resp.text[:160]}")
             else:
-                raise RegistrationError(f'enroll -> HTTP {resp.status_code}: {resp.text[:200]}')
+                raise RegistrationError(f"enroll -> HTTP {resp.status_code}: {resp.text[:200]}")
         except (requests.Timeout, requests.ConnectionError) as e:
             last = e
         if i < attempts - 1:
             time.sleep(delay)
             delay = min(delay * 1.7, 20.0)
-    raise RegistrationError(f'enrollment failed after {attempts} attempts: {last}')
+    raise RegistrationError(f"enrollment failed after {attempts} attempts: {last}")
 
-def register(register_url: str, tokens: TokenProvider, timeout: float=60.0, attempts: int=8) -> str:
+
+def register(register_url: str, tokens: TokenProvider, timeout: float = 60.0, attempts: int = 8) -> str:
     """POST the empty-body registration; return the deviceId the gateway confirms.
 
     Cold-start resilient: the gateway scales to zero, so the first call after idle can take tens of seconds or
@@ -143,28 +173,34 @@ def register(register_url: str, tokens: TokenProvider, timeout: float=60.0, atte
     delay = 3.0
     for i in range(attempts):
         try:
-            resp = requests.post(register_url, json={}, headers={'Authorization': f'Bearer {tokens.current()}', 'Content-Type': 'application/json'}, timeout=timeout)
+            resp = requests.post(
+                register_url,
+                json={},
+                headers={"Authorization": f"Bearer {tokens.current()}", "Content-Type": "application/json"},
+                timeout=timeout,
+            )
             if resp.status_code // 100 == 2:
                 try:
-                    return resp.json().get('data') or ''
+                    return resp.json().get("data") or ""
                 except Exception:
-                    return ''
+                    return ""
             if resp.status_code // 100 == 5:
-                last = RegistrationError(f'register -> HTTP {resp.status_code}: {resp.text[:160]}')
+                last = RegistrationError(f"register -> HTTP {resp.status_code}: {resp.text[:160]}")
             else:
-                raise RegistrationError(f'register {register_url} -> HTTP {resp.status_code}: {resp.text[:200]}')
+                raise RegistrationError(f"register {register_url} -> HTTP {resp.status_code}: {resp.text[:200]}")
         except (requests.Timeout, requests.ConnectionError) as e:
             last = e
         if i < attempts - 1:
             time.sleep(delay)
             delay = min(delay * 1.7, 20.0)
-    raise RegistrationError(f'registration failed after {attempts} attempts: {last}')
+    raise RegistrationError(f"registration failed after {attempts} attempts: {last}")
 
-def confirm_visible(devices_url: str, bearer: str, device_id: str, timeout: float=30.0) -> bool:
+
+def confirm_visible(devices_url: str, bearer: str, device_id: str, timeout: float = 30.0) -> bool:
     """Optional: check the device now appears in the operator's devices list (with a user token)."""
-    resp = requests.get(devices_url, headers={'Authorization': f'Bearer {bearer}'}, timeout=timeout)
+    resp = requests.get(devices_url, headers={"Authorization": f"Bearer {bearer}"}, timeout=timeout)
     if resp.status_code // 100 != 2:
         return False
     data = resp.json()
-    rows = data.get('data') if isinstance(data, dict) else data
-    return any((r.get('id') == device_id for r in rows or []))
+    rows = data.get("data") if isinstance(data, dict) else data
+    return any((r.get("id") == device_id) for r in (rows or []))
