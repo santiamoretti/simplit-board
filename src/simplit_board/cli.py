@@ -72,11 +72,39 @@ def _choose_placement(cfg, op_token: str, preselected: str | None) -> str | None
     click.echo(f'placement   : {chosen.get('name')}  [{chosen.get('id')}]')
     return chosen.get('id')
 
+def _complete_login(cfg, res: dict, mfa_code: str | None) -> str:
+    """Turn an auth LoginResult into an operator token, walking the 2FA challenge if the account has one.
+    Handles both an already-enrolled account (enter the 6-digit code) and a first-time forced enrollment
+    (add the shown secret to an authenticator app, then enter the code it generates)."""
+    token = res.get('token')
+    if token:
+        return token
+    if res.get('mfaRequired') and res.get('mfaToken'):
+        click.echo('\nthis account has two-factor authentication (2FA) enabled.')
+        code = (mfa_code or click.prompt('  6-digit code from your authenticator app')).strip()
+        return registrar.mfa_verify(cfg.mfa_verify_url, res['mfaToken'], code)
+    if res.get('mfaEnrollmentRequired') and res.get('mfaEnrollmentToken'):
+        setup = registrar.mfa_setup(cfg.mfa_setup_url, res['mfaEnrollmentToken'])
+        click.echo('\nthis account must set up two-factor authentication (2FA) first.')
+        click.echo('add this secret to your authenticator app (Google Authenticator / Authy / 1Password / …):')
+        click.echo(f'\n    {setup.get('secret')}\n')
+        code = (mfa_code or click.prompt('  then enter the 6-digit code it shows')).strip()
+        out = registrar.mfa_enroll(cfg.mfa_enroll_url, res['mfaEnrollmentToken'], code)
+        codes = out.get('backupCodes') or []
+        if codes:
+            click.echo('\nSAVE these one-time backup codes somewhere safe (they are shown only once):')
+            for c in codes:
+                click.echo(f'    {c}')
+            click.echo('')
+        return out['token']
+    raise registrar.RegistrationError('sign-in returned no token and no 2FA challenge')
+
 @main.command()
 @click.option('--email', default=None, help='operator email (prompted if omitted)')
 @click.option('--password', default=None, help="operator password (prompted if omitted; use the prompt, don't put it in shell history)")
 @click.option('--subdivision', default=None, help='place the board under this subdivision (id or name); prompts if omitted')
-def register(email: str | None, password: str | None, subdivision: str | None) -> None:
+@click.option('--mfa-code', default=None, help='2FA code, if your account has it (prompted if omitted)')
+def register(email: str | None, password: str | None, subdivision: str | None, mfa_code: str | None) -> None:
     """Enrol this device by signing in as an operator.
 
     You are prompted for your SimplitSecurity email + password. That sign-in is the authorization: the
@@ -94,7 +122,8 @@ def register(email: str | None, password: str | None, subdivision: str | None) -
         email = email or click.prompt('  operator email')
         password = password or click.prompt('  operator password', hide_input=True)
         try:
-            op_token = registrar.login(cfg.login_url, email.strip(), password)
+            login_res = registrar.login(cfg.login_url, email.strip(), password)
+            op_token = _complete_login(cfg, login_res, mfa_code)
             parent = _choose_placement(cfg, op_token, subdivision)
             result = registrar.enroll(cfg.enroll_url, op_token, st.name, st.public_key or '', parent_resource_id=parent)
         except registrar.RegistrationError as e:

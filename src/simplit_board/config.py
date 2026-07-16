@@ -27,6 +27,18 @@ class Config:
         return f'{self.auth_url}/api/v1/auth/login'
 
     @property
+    def mfa_verify_url(self) -> str:
+        return f'{self.auth_url}/api/v1/auth/mfa/verify'
+
+    @property
+    def mfa_setup_url(self) -> str:
+        return f'{self.auth_url}/api/v1/auth/mfa/setup'
+
+    @property
+    def mfa_enroll_url(self) -> str:
+        return f'{self.auth_url}/api/v1/auth/mfa/enroll'
+
+    @property
     def enroll_url(self) -> str:
         return f'{self.enrollment_url}/api/enroll'
 

@@ -6,9 +6,10 @@ from .auth import TokenProvider
 class RegistrationError(RuntimeError):
     pass
 
-def login(login_url: str, email: str, password: str, timeout: float=45.0, attempts: int=5) -> str:
-    """Authenticate the operator; return their access token. That token IS the enrollment authorization —
-    the enrollment service gates on the operator holding the enrollDevice permission.
+def login(login_url: str, email: str, password: str, timeout: float=45.0, attempts: int=5) -> dict:
+    """Authenticate the operator; return the auth LoginResult body. It EITHER carries a session ``token`` (no
+    2FA), OR a 2FA challenge to complete: ``mfaRequired``+``mfaToken`` (already enrolled) or
+    ``mfaEnrollmentRequired``+``mfaEnrollmentToken`` (first-time). The caller resolves the challenge.
 
     Cold-start resilient: the auth service scales to zero, so the first sign-in after idle can time out or
     reset. We retry those (and 5xx) with backoff. A 4xx (bad credentials) is a real rejection — no retry.
@@ -20,12 +21,9 @@ def login(login_url: str, email: str, password: str, timeout: float=45.0, attemp
             resp = requests.post(login_url, json={'email': email, 'password': password}, headers={'Content-Type': 'application/json'}, timeout=timeout)
             if resp.status_code // 100 == 2:
                 body = resp.json()
-                token = body.get('token')
-                if not token:
-                    if body.get('passwordChangeRequired') or body.get('mustChangePassword'):
-                        raise RegistrationError('this account must set a new password first — sign in on the web app once, then retry.')
-                    raise RegistrationError('sign-in returned no token')
-                return token
+                if body.get('passwordChangeRequired') or body.get('mustChangePassword'):
+                    raise RegistrationError('this account must set a new password first — sign in on the web app once, then retry.')
+                return body
             if resp.status_code == 429:
                 last = RegistrationError('sign-in rate-limited (HTTP 429)')
             elif resp.status_code // 100 == 5:
@@ -38,6 +36,38 @@ def login(login_url: str, email: str, password: str, timeout: float=45.0, attemp
             time.sleep(delay)
             delay = min(delay * 1.7, 20.0)
     raise RegistrationError(f'sign-in failed after {attempts} attempts (auth may be cold): {last}')
+
+def mfa_verify(verify_url: str, mfa_token: str, code: str, timeout: float=45.0) -> str:
+    """Redeem an already-enrolled 2FA login challenge with the 6-digit code (or a backup code). Returns the
+    session token. A 4xx means a wrong/expired code — surfaced so the caller can re-prompt."""
+    resp = requests.post(verify_url, json={'mfaToken': mfa_token, 'code': code}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+    if resp.status_code // 100 != 2:
+        raise RegistrationError(f'2FA code rejected (HTTP {resp.status_code}) — check the 6-digit code and retry.')
+    token = resp.json().get('token')
+    if not token:
+        raise RegistrationError('2FA verification returned no token')
+    return token
+
+def mfa_setup(setup_url: str, enrollment_token: str, timeout: float=45.0) -> dict:
+    """Begin first-time TOTP enrollment (forced-login flow). Returns {secret, qrDataUri} — the secret is added
+    to an authenticator app for manual entry (a terminal can't render the QR)."""
+    resp = requests.post(setup_url, json={'enrollmentToken': enrollment_token}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+    if resp.status_code // 100 != 2:
+        raise RegistrationError(f'could not start 2FA setup (HTTP {resp.status_code})')
+    return resp.json()
+
+def mfa_enroll(enroll_url: str, enrollment_token: str, code: str, timeout: float=45.0) -> dict:
+    """Confirm the first code and activate 2FA. Returns {"token": <session token>, "backupCodes": [...]} —
+    the backup codes are one-time and must be saved by the operator."""
+    resp = requests.post(enroll_url, json={'enrollmentToken': enrollment_token, 'code': code}, headers={'Content-Type': 'application/json'}, timeout=timeout)
+    if resp.status_code // 100 != 2:
+        raise RegistrationError(f'2FA setup code rejected (HTTP {resp.status_code}) — check the code and retry.')
+    body = resp.json()
+    session = body.get('session') or {}
+    token = session.get('token') or body.get('token')
+    if not token:
+        raise RegistrationError('2FA enrollment returned no token')
+    return {'token': token, 'backupCodes': body.get('backupCodes') or []}
 
 def list_targets(targets_url: str, operator_token: str, timeout: float=45.0, attempts: int=5) -> list:
     """The subdivisions this board may be placed under, as [{id, name, parentId, type}]. The enrollment service

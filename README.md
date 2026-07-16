@@ -83,6 +83,15 @@ simplit-board register --email vos@ejemplo.com --password 'tu-contraseña' --sub
 > vas a ver un error de "no autorizado" (`not authorized`). Eso lo decide el motor de permisos de
 > SimplitSecurity, no este programa: pedile a tu administrador que te dé el permiso.
 
+> 🔐 **Si tu cuenta tiene verificación en dos pasos (2FA):** después del email y la contraseña, el programa te
+> va a pedir el **código de 6 dígitos** de tu app de autenticación (Google Authenticator, Authy, 1Password, …).
+> Si es la **primera vez**, primero te muestra un **código secreto** para agregar a la app, y después te pide
+> el código que la app genera (y te da unos **códigos de respaldo** para guardar). Podés pasar el código de una
+> con `--mfa-code 123456`, pero como cambia cada 30 segundos, normalmente conviene dejar que te lo pregunte.
+>
+> Nota: si tu cuenta además tiene que **cambiar la contraseña** por primera vez, hacelo una vez en la web
+> (`iniciá sesión en la consola`) y después volvé a correr `register`.
+
 ### Paso 2 — Ponerlo en línea y esperar
 
 ```bash
