@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 
 import click
@@ -266,6 +269,57 @@ def status() -> None:
     click.echo(f"version     : {st.current_version}")
     click.echo(f"state dir   : {cfg.state_dir}")
     click.echo(f"presence    : {cfg.presence_ws}")
+
+
+def _sudo() -> list[str]:
+    if os.geteuid() == 0:
+        return []
+    if shutil.which("sudo") is None:
+        raise click.ClickException("need root (or sudo) to install a systemd service")
+    return ["sudo"]
+
+
+@main.command("install-service")
+@click.option("--user", default=None, help="user to run the service as (default: SUDO_USER / current user)")
+def install_service(user: str | None) -> None:
+    """Install + enable a systemd service so `simplit-board up` runs on boot and reconnects on its own.
+
+    Detects this install's `simplit-board` executable, the operating user and the state dir, writes
+    /etc/systemd/system/simplit-board.service, then daemon-reloads and enables+starts it.
+    """
+    exe = shutil.which("simplit-board") or os.path.join(os.path.dirname(sys.executable), "simplit-board")
+    if not os.path.exists(exe):
+        raise click.ClickException(f"could not find the simplit-board executable ({exe}); install the package first")
+    run_user = user or os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME") or "root"
+    state_dir = os.environ.get("SIMPLIT_STATE_DIR", "/var/lib/simplit")
+    unit = (
+        "[Unit]\n"
+        "Description=Simplit Board agent\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"User={run_user}\n"
+        f"Environment=SIMPLIT_STATE_DIR={state_dir}\n"
+        f"ExecStart={exe} up\n"
+        "Restart=always\n"
+        "RestartSec=5\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+    path = "/etc/systemd/system/simplit-board.service"
+    sudo = _sudo()
+    with tempfile.NamedTemporaryFile("w", suffix=".service", delete=False) as tf:
+        tf.write(unit)
+        tmp = tf.name
+    try:
+        subprocess.run([*sudo, "cp", tmp, path], check=True, timeout=30)
+    finally:
+        os.unlink(tmp)
+    subprocess.run([*sudo, "systemctl", "daemon-reload"], check=True, timeout=30)
+    subprocess.run([*sudo, "systemctl", "enable", "--now", "simplit-board"], check=True, timeout=60)
+    click.echo(f"installed + started 'simplit-board' service  ✓  (user={run_user}, exec={exe} up)")
+    click.echo("check it with:  sudo systemctl status simplit-board")
 
 
 if __name__ == "__main__":

@@ -206,12 +206,20 @@ nunca queda a nombre de `root`. Si usás una carpeta propia, definí `SIMPLIT_ST
 
 ## 8. Dejarlo corriendo como servicio (systemd)
 
-`simplit-board up` corre en primer plano. Para que arranque solo y se reconecte, instalá el servicio de
-ejemplo que viene en `packaging/simplit-board.service` (ajustá `User` y la ruta del `.venv`):
+`simplit-board up` corre en primer plano. Para que arranque solo al prender el equipo y se reconecte, lo más
+fácil es un comando:
 
 ```bash
-sudo cp packaging/simplit-board.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now simplit-board
-sudo systemctl status simplit-board      # para ver que está corriendo
+sudo simplit-board install-service
 ```
+
+Eso detecta solo tu instalación (el ejecutable, tu usuario y la carpeta de estado), escribe el servicio en
+`/etc/systemd/system/simplit-board.service`, lo activa y lo arranca. Para ver que está corriendo:
+
+```bash
+sudo systemctl status simplit-board
+```
+
+> Si preferís hacerlo a mano, en `packaging/simplit-board.service` está el archivo de ejemplo (ajustá `User` y
+> la ruta del `.venv`), lo copiás a `/etc/systemd/system/` y hacés `systemctl daemon-reload` +
+> `systemctl enable --now simplit-board`.
