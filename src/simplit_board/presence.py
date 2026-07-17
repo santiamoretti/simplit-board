@@ -15,6 +15,14 @@ JobHandler = Callable[[dict], dict]
 ArtifactHandler = Callable[[dict, bytes], dict]
 
 
+PING_INTERVAL = 20
+PING_TIMEOUT = 10
+
+BACKOFF_START = 0.5
+BACKOFF_MAX = 5.0
+HEALTHY_SECS = 20.0
+
+
 class PresenceClient:
     def __init__(self, ws_url: str, token_provider, device_id: str, handler: Optional[JobHandler] = None,
                  log=print, yield_after_deploy: bool = False,
@@ -29,49 +37,82 @@ class PresenceClient:
         self._delivery_key = delivery_key
         self._pending: dict[str, dict] = {}
         self._stop = False
+        self._done = False
+        self._app: Optional[websocket.WebSocketApp] = None
 
     def stop(self) -> None:
         self._stop = True
+        if self._app is not None:
+            try:
+                self._app.close()
+            except Exception:
+                pass
 
     def run_forever(self) -> None:
-        backoff = 1.0
-        while not self._stop:
+        backoff = BACKOFF_START
+        while not self._stop and not self._done:
+            url = f"{self._ws_url}?token={self._tokens.current()}"
+            self._log(f"[presence] connecting as {self._device_id} …")
+            self._app = websocket.WebSocketApp(
+                url,
+                on_open=self._on_open,
+                on_message=self._on_message,
+                on_error=self._on_error,
+                on_close=self._on_close,
+            )
+            started = time.monotonic()
             try:
-                url = f"{self._ws_url}?token={self._tokens.current()}"
-                self._log(f"[presence] connecting as {self._device_id} …")
-                ws = websocket.create_connection(url, timeout=100, enable_multithread=True)
-                self._log("[presence] connected — waiting for pushes")
-                backoff = 1.0
-                self._pump(ws)
+
+
+                self._app.run_forever(ping_interval=PING_INTERVAL, ping_timeout=PING_TIMEOUT,
+                                      skip_utf8_validation=True)
             except Exception as e:
-                if self._stop:
-                    break
-                self._log(f"[presence] disconnected: {e} — reconnecting in {backoff:.0f}s")
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 30.0)
-
-    def _pump(self, ws) -> None:
-        while not self._stop:
-            raw = ws.recv()
-            if raw is None or raw == "":
-                continue
-            try:
-                frame = json.loads(raw)
-            except Exception:
-                continue
-            t = frame.get("type")
-            if t == "deviceJob":
-                self._on_device_job(ws, frame)
-            elif t == "deployStart":
-                self._on_deploy_start(frame)
-            elif t == "deployChunk":
-                self._on_deploy_chunk(frame)
-            elif t == "deployEnd":
-                if self._on_deploy_end(ws, frame):
-                    return
+                self._log(f"[presence] error: {e}")
+            if self._stop or self._done:
+                break
 
 
-    def _on_device_job(self, ws, frame: dict) -> None:
+            if time.monotonic() - started >= HEALTHY_SECS:
+                backoff = BACKOFF_START
+            self._log(f"[presence] disconnected — reconnecting in {backoff:.1f}s")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, BACKOFF_MAX)
+
+
+    def _on_open(self, _app) -> None:
+        self._log("[presence] connected — waiting for pushes")
+
+    def _on_error(self, _app, err) -> None:
+        self._log(f"[presence] connection error: {err}")
+
+    def _on_close(self, _app, status_code, msg) -> None:
+
+        pass
+
+    def _on_message(self, _app, raw) -> None:
+        if not raw:
+            return
+        try:
+            frame = json.loads(raw)
+        except Exception:
+            return
+        t = frame.get("type")
+        if t == "deviceJob":
+            self._on_device_job(frame)
+        elif t == "deployStart":
+            self._on_deploy_start(frame)
+        elif t == "deployChunk":
+            self._on_deploy_chunk(frame)
+        elif t == "deployEnd":
+            self._on_deploy_end(frame)
+
+
+    def _send(self, obj: dict) -> None:
+        if self._app is not None:
+            self._app.send(json.dumps(obj))
+
+
+    def _on_device_job(self, frame: dict) -> None:
         request_id = frame.get("requestId")
         self._log(f"[presence] deviceJob {request_id} received")
         try:
@@ -79,10 +120,10 @@ class PresenceClient:
                 "boardId": self._device_id, "status": "rejected", "detail": "no job handler"}
         except Exception as e:
             result = {"boardId": self._device_id, "status": "failed", "detail": str(e)[:400]}
-        ws.send(json.dumps({"type": "deviceJobResult", "requestId": request_id, "result": result}))
+        self._send({"type": "deviceJobResult", "requestId": request_id, "result": result})
         self._log(f"[presence] deviceJobResult {request_id} -> {result.get('status')}: {result.get('detail','')}")
         if self._yield_after_deploy and result.get("status") == "deployed":
-            self._yield(ws, "board service installed")
+            self._yield("board service installed")
 
 
     def _on_deploy_start(self, frame: dict) -> None:
@@ -112,16 +153,14 @@ class PresenceClient:
         except Exception:
             pass
 
-    def _on_deploy_end(self, ws, frame: dict) -> bool:
+    def _on_deploy_end(self, frame: dict) -> None:
         deploy_id = frame.get("deployId")
         st = self._pending.pop(deploy_id, None)
         result = self._assemble_and_deploy(st)
-        ws.send(json.dumps({"type": "deployResult", "requestId": deploy_id, "result": result}))
+        self._send({"type": "deployResult", "requestId": deploy_id, "result": result})
         self._log(f"[deploy] {deploy_id} -> {result.get('status')}: {result.get('detail','')}")
         if result.get("status") == "deployed" and self._yield_after_deploy:
-            self._yield(ws, "board service installed from streamed bytes")
-            return True
-        return False
+            self._yield("board service installed from streamed bytes")
 
     def _assemble_and_deploy(self, st: Optional[dict]) -> dict:
         if st is None:
@@ -150,10 +189,12 @@ class PresenceClient:
         except Exception as e:
             return {"boardId": self._device_id, "status": "failed", "detail": f"apply error: {str(e)[:300]}"}
 
-    def _yield(self, ws, why: str) -> None:
+    def _yield(self, why: str) -> None:
         self._log(f"[presence] {why} — yielding the presence session to it")
+        self._done = True
         self._stop = True
-        try:
-            ws.close()
-        except Exception:
-            pass
+        if self._app is not None:
+            try:
+                self._app.close()
+            except Exception:
+                pass
