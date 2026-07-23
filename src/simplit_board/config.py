@@ -1,3 +1,8 @@
+"""Runtime configuration — cloud endpoints, state dir, and the trusted control signing key.
+
+Everything is environment-overridable so the same tool image runs against a dev cloud, a test container, or a
+real appliance without a rebuild. Defaults point at the live SimplitSecurity cloud.
+"""
 from __future__ import annotations
 
 import os
@@ -21,47 +26,36 @@ class Config:
     trusted_delivery_pubkey: str
     org: str
 
-
     @property
     def token_url(self) -> str:
-
         return f"{self.auth_url}/api/v1/auth/token"
 
     @property
     def login_url(self) -> str:
-
         return f"{self.auth_url}/api/v1/auth/login"
 
     @property
     def mfa_verify_url(self) -> str:
-
         return f"{self.auth_url}/api/v1/auth/mfa/verify"
 
     @property
     def mfa_setup_url(self) -> str:
-
         return f"{self.auth_url}/api/v1/auth/mfa/setup"
 
     @property
     def mfa_enroll_url(self) -> str:
-
         return f"{self.auth_url}/api/v1/auth/mfa/enroll"
 
     @property
     def enroll_url(self) -> str:
-
-
         return f"{self.enrollment_url}/api/enroll"
 
     @property
     def targets_url(self) -> str:
-
-
         return f"{self.enrollment_url}/api/enroll/targets"
 
     @property
     def register_url(self) -> str:
-
         return f"{self.gateway_url}/api/register"
 
     @property
@@ -70,7 +64,6 @@ class Config:
 
     @property
     def presence_ws(self) -> str:
-
         return f"{self.presence_ws_url}/ws"
 
     @property

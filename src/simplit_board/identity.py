@@ -1,3 +1,9 @@
+"""The board's Ed25519 identity — generated once on first boot, persisted, and reused across reboots.
+
+This is the key point behind "the board must not mint a new id after a power cut": the private key and the
+device id are written atomically to the state dir on first registration and loaded verbatim thereafter. The
+public key is what the cloud stores for the device; the private key signs status/acks the board sends back.
+"""
 from __future__ import annotations
 
 import base64

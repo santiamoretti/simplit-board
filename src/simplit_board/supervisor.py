@@ -1,3 +1,11 @@
+"""Deploy + supervise the Java service.
+
+This is the "receives the update and deploys it" half. A verified job carries the artifact reference (a jar URL
+in ``imageRef``, or a baked jar if none). We fetch it if needed, atomically swap it into place, launch it with
+``java -jar``, and health-check that it actually comes up (a ``Started`` line, or simply staying alive past a
+grace window). On failure we roll back to the previous jar. The Java process is the thing that runs the actual
+security tooling; the agent only owns getting the right, verified jar running.
+"""
 from __future__ import annotations
 
 import os
@@ -22,16 +30,11 @@ class Supervisor:
         self.jar_dir = jar_dir
         self.java_bin = java_bin
         self.baked_jar = baked_jar or os.environ.get("SIMPLIT_BOARD_JAR")
-
-
         self.device_id = device_id
         self.device_secret = device_secret
         self.token_url = token_url
         self.presence_url = presence_url
-
         self.register_url = register_url
-
-
         self.delivery_pubkey = delivery_pubkey
         self.jar_dir.mkdir(parents=True, exist_ok=True)
         self.proc: Optional[subprocess.Popen] = None
@@ -73,8 +76,6 @@ class Supervisor:
         self.proc = None
 
     def _preflight(self) -> None:
-
-
         from . import bootstrap
         if not bootstrap.java_ready():
             raise DeployError("no Java runtime — run `simplit-board bootstrap` to install prerequisites first")
@@ -104,7 +105,6 @@ class Supervisor:
     def _launch(self, version: str, extra: list[str], grace_seconds: float = 35.0) -> str:
         self._stop()
 
-
         env = dict(os.environ)
         env.setdefault("SIMPLIT_REGISTER_ENABLED", "false")
         env.setdefault("SIMPLIT_PROVISION_ENABLED", "false")
@@ -113,8 +113,6 @@ class Supervisor:
         env.setdefault("SIMPLIT_REPORT_EXEC", "python3 /opt/simplit/pysandbox/worker.py")
         env.setdefault("SIMPLIT_DEVICE_IDENTITY_PATH", str(self.jar_dir.parent / "device-identity.json"))
         env.setdefault("SIMPLIT_SIGNAL_IDENTITY_PATH", str(self.jar_dir.parent / "device-signal.json"))
-
-
         key_file = self.jar_dir.parent / "device.key"
         if "SIMPLIT_DEVICE_SIGNING_KEY" not in env and key_file.exists():
             try:
@@ -129,33 +127,23 @@ class Supervisor:
             env["SIMPLIT_AUTH_TOKEN_URL"] = self.token_url
         if self.presence_url:
             env["SIMPLIT_PRESENCE_URL"] = self.presence_url
-
-
         pub = os.environ.get("SIMPLIT_CONTROL_PUBKEY") or os.environ.get("SIMPLIT_CONTROL_PUBLIC_KEY")
         if pub:
             env.setdefault("SIMPLIT_CONTROL_PUBLIC_KEY", pub)
-
-
         env["SIMPLIT_SIGNAL_ENABLED"] = "true"
         env["SIMPLIT_SELF_JAR"] = str(self.app_jar)
         env["SIMPLIT_JAVA_BIN"] = self.java_bin
         env.setdefault("SIMPLIT_ORG_ID", os.environ.get("SIMPLIT_ORG", "simplit"))
-
-
         dpub = self.delivery_pubkey or os.environ.get("SIMPLIT_DELIVERY_PUBKEY") \
             or os.environ.get("SIMPLIT_DELIVERY_PUBLIC_KEY")
         if dpub:
             env["SIMPLIT_BUILD_PUBLIC_KEY"] = dpub
             env["SIMPLIT_DELIVERY_PUBLIC_KEY"] = dpub
-
-
         if self.register_url:
             env["SIMPLIT_REGISTER_ENABLED"] = "true"
             env["SIMPLIT_REGISTER_URL"] = self.register_url
 
         log = open(self.log_file, "wb")
-
-
         wrapper = self.jar_dir / "run-board.sh"
         wrapper.write_text(
             "#!/bin/bash\n"
@@ -170,7 +158,6 @@ class Supervisor:
             ["bash", str(wrapper)],
             stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True,
         )
-
 
         deadline = time.time() + grace_seconds
         while time.time() < deadline:
@@ -187,7 +174,6 @@ class Supervisor:
                 self.version = version
                 return f"deployed {version} (pid {self.proc.pid}, started)"
             time.sleep(1.0)
-
 
         if self.proc.poll() is None:
             self.version = version

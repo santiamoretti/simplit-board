@@ -1,3 +1,11 @@
+"""Verify control's signed job envelope.
+
+Control signs the job with Ed25519. The presence frame carries ``payload`` and ``signature`` as base64 strings;
+the signature is over the RAW decoded payload bytes (Jackson's compact JSON in declaration order, nulls
+included) — so we must verify over ``b64decode(payload)`` and then ``json.loads`` those same bytes. NEVER
+re-serialize the job to verify: any reordering/nul-dropping breaks the signature. This is the only trust gate —
+presence itself does no crypto, so a blank/missing control key means we reject every job.
+"""
 from __future__ import annotations
 
 import base64

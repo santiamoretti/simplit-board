@@ -1,3 +1,11 @@
+"""``simplit-board`` — the appliance's terminal tool.
+
+    simplit-board register   # mint a friendly identity + register this device in the cloud
+    simplit-board up         # connect to the presence relay and receive/verify/deploy Java pushes
+    simplit-board status     # show the local identity + service state
+
+Identity is generated once and persisted; a reboot re-uses it (never mints a new device).
+"""
 from __future__ import annotations
 
 import os
@@ -90,12 +98,10 @@ def _complete_login(cfg, res: dict, mfa_code: str | None) -> str:
     token = res.get("token")
     if token:
         return token
-
     if res.get("mfaRequired") and res.get("mfaToken"):
         click.echo("\nthis account has two-factor authentication (2FA) enabled.")
         code = (mfa_code or click.prompt("  6-digit code from your authenticator app")).strip()
         return registrar.mfa_verify(cfg.mfa_verify_url, res["mfaToken"], code)
-
     if res.get("mfaEnrollmentRequired") and res.get("mfaEnrollmentToken"):
         setup = registrar.mfa_setup(cfg.mfa_setup_url, res["mfaEnrollmentToken"])
         click.echo("\nthis account must set up two-factor authentication (2FA) first.")
@@ -133,7 +139,6 @@ def register(email: str | None, password: str | None, subdivision: str | None, m
 
     secret = os.environ.get("SIMPLIT_DEVICE_SECRET") or st.client_secret
     if not secret:
-
         click.echo("\nsign in to enrol this device (your account must hold the enrollDevice permission):")
         email = email or click.prompt("  operator email")
         password = password or click.prompt("  operator password", hide_input=True)
@@ -152,7 +157,6 @@ def register(email: str | None, password: str | None, subdivision: str | None, m
         where = "the organization root" if not parent else f"subdivision {parent}"
         click.echo(f"enrolled    : credential minted + resource created under {where}  ✓")
 
-
         anchor = (result.get("signingPubkey") or "").strip()
         if anchor:
             st.delivery_pubkey = anchor
@@ -160,7 +164,6 @@ def register(email: str | None, password: str | None, subdivision: str | None, m
         else:
             click.echo("trust anchor: enrollment returned no signing key — set SIMPLIT_DELIVERY_PUBKEY before "
                        "`up`, or ask an operator to configure enrollment.signing-pubkey.", err=True)
-
 
     tokens = TokenProvider(cfg.token_url, st.client_id or st.name, secret)
     try:
@@ -193,8 +196,6 @@ def up() -> None:
     if not secret:
         click.echo("no device credential — run `simplit-board register` first.", err=True)
         sys.exit(2)
-
-
     delivery_pub_b64 = st.delivery_pubkey or cfg.trusted_delivery_pubkey or ""
     delivery_key = verify.load_control_key(delivery_pub_b64) if delivery_pub_b64 else None
     control_key = verify.load_control_key(cfg.trusted_control_pubkey) if cfg.trusted_control_pubkey else None
@@ -208,14 +209,12 @@ def up() -> None:
                             register_url=cfg.register_url, delivery_pubkey=delivery_pub_b64)
 
     def handle_artifact(manifest: dict, data: bytes) -> dict:
-
         click.echo(f"[deploy] verified {len(data)} bytes ({manifest.get('service')} v={manifest.get('version')}) "
                    "— installing the board service from the received bytes …")
         detail = supervisor.deploy_bytes(data, version=str(manifest.get("version") or "pushed"))
         return {"boardId": st.name, "status": "deployed", "detail": detail}
 
     def handle_push(frame: dict) -> dict:
-
         job = verify.verify_job(control_key, frame.get("payload", ""), frame.get("signature", ""))
         ref = job.get("imageRef") or job.get("image") or job.get("componentId") or "board service"
         click.echo(f"[push] control signature verified — installing {ref} …")
@@ -240,7 +239,6 @@ def up() -> None:
     if not supervisor.status().get("running"):
         click.echo("push did not result in a running board service — see the log above.", err=True)
         return
-
 
     ephemeral = os.environ.get("SIMPLIT_AGENT_EPHEMERAL", "true").strip().lower() in ("1", "true", "yes")
     if ephemeral:

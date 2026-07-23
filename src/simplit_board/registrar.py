@@ -1,3 +1,12 @@
+"""Registration — materialise this device in the cloud so an operator can see it and push to it.
+
+Registration is a single ``POST /api/register`` with an EMPTY body: the gateway takes the deviceId and org
+purely from the JWT (``sub`` / ``agencyId``), writes the device's resource node into the permission tree and a
+DeviceDoc into the registry. Idempotent — safe to call on every boot.
+
+The device credential (clientId=deviceId, clientSecret) is provisioned out of band by an operator/enrollment
+step — a device does not self-enroll anonymously. This module assumes the credential already exists.
+"""
 from __future__ import annotations
 
 import time

@@ -1,3 +1,23 @@
+"""Presence relay client — the bootstrap + delivery channel.
+
+Connects to the presence relay as this device (JWT in the ``?token=`` query — a header-based handshake 401s),
+then receives frames. Two things arrive here:
+
+  * ``deviceJob`` — a control-signed job (legacy reference deploy / os-command). Verified + applied by ``handler``.
+  * ``deployStart`` / ``deployChunk`` / ``deployEnd`` — the DELIVERY service streaming an artifact's BYTES down
+    to this board. We authenticate the manifest (Ed25519 over the artifact's SHA-256), reassemble the chunks,
+    re-check the hash, and run exactly what we received — fetching nothing, touching no registry.
+
+The socket is kept alive with application-level WebSocket ping/pong: the relay lives behind an ingress that
+drops IDLE WebSocket connections, so without pings a session goes half-open — the agent stays blocked on recv
+printing "waiting for pushes" while the relay has already marked the device OFFLINE (so pushes fail). A ping
+every ``ping_interval`` keeps the session up; a missed pong within ``ping_timeout`` closes it and we reconnect.
+
+With ``yield_after_deploy=True`` the client stops the instant an artifact is installed: it replies success,
+closes its socket, and returns — yielding the one-per-device presence session to the board service the deploy
+just started (which reconnects as the same device and owns the channel from then on). The relay is last-writer-
+wins and its close is session-guarded, so this handoff is race-free.
+"""
 from __future__ import annotations
 
 import base64
@@ -14,10 +34,8 @@ from . import verify
 JobHandler = Callable[[dict], dict]
 ArtifactHandler = Callable[[dict, bytes], dict]
 
-
 PING_INTERVAL = 20
 PING_TIMEOUT = 10
-
 BACKOFF_START = 0.5
 BACKOFF_MAX = 5.0
 HEALTHY_SECS = 20.0
@@ -62,22 +80,17 @@ class PresenceClient:
             )
             started = time.monotonic()
             try:
-
-
                 self._app.run_forever(ping_interval=PING_INTERVAL, ping_timeout=PING_TIMEOUT,
                                       skip_utf8_validation=True)
             except Exception as e:
                 self._log(f"[presence] error: {e}")
             if self._stop or self._done:
                 break
-
-
             if time.monotonic() - started >= HEALTHY_SECS:
                 backoff = BACKOFF_START
             self._log(f"[presence] disconnected — reconnecting in {backoff:.1f}s")
             time.sleep(backoff)
             backoff = min(backoff * 2, BACKOFF_MAX)
-
 
     def _on_open(self, _app) -> None:
         self._log("[presence] connected — waiting for pushes")
@@ -86,7 +99,6 @@ class PresenceClient:
         self._log(f"[presence] connection error: {err}")
 
     def _on_close(self, _app, status_code, msg) -> None:
-
         pass
 
     def _on_message(self, _app, raw) -> None:
@@ -106,11 +118,9 @@ class PresenceClient:
         elif t == "deployEnd":
             self._on_deploy_end(frame)
 
-
     def _send(self, obj: dict) -> None:
         if self._app is not None:
             self._app.send(json.dumps(obj))
-
 
     def _on_device_job(self, frame: dict) -> None:
         request_id = frame.get("requestId")
@@ -125,13 +135,10 @@ class PresenceClient:
         if self._yield_after_deploy and result.get("status") == "deployed":
             self._yield("board service installed")
 
-
     def _on_deploy_start(self, frame: dict) -> None:
         deploy_id = frame.get("deployId")
         manifest = {k: frame.get(k) for k in
                     ("service", "version", "size", "sha256", "chunkCount", "chunkBytes", "sig")}
-
-
         authentic = False
         if self._delivery_key is not None and manifest.get("sha256") and manifest.get("sig"):
             try:

@@ -1,3 +1,15 @@
+"""Bootstrap — install the prerequisites the Java service needs to RUN, before it is ever deployed.
+
+Layering: the Java service provisions the security *tooling* itself (Suricata, OpenVAS, the sandboxed Python)
+via its own framework. This step sits one level below that — it makes the box able to run the Java at all:
+a JRE, plus the OS-level bits the Java's provisioning relies on (a container runtime for the containerised
+OpenVAS, python3 for the sandbox base, and a few essentials).
+
+Design mirrors the Java side: each prerequisite is a small, ordered unit that CHECKS whether it's already
+satisfied and only installs if missing. So it's idempotent (re-running is cheap), ordered (@order), and
+fail-soft (one missing optional prereq doesn't abort the rest — it's reported). On a Debian/Ubuntu appliance it
+installs via apt; on a box where things are already present (e.g. the emulator image) every check just passes.
+"""
 from __future__ import annotations
 
 import os
@@ -16,8 +28,6 @@ def _has(binary: str) -> bool:
 
 
 def _sudo() -> List[str]:
-
-
     try:
         if os.geteuid() == 0:
             return []
@@ -104,7 +114,6 @@ def _install(generic: str) -> None:
     prefix = [] if mgr == "brew" else _sudo()
     for cmd in _install_cmds(mgr, pkgs):
         r = subprocess.run([*prefix, *cmd], env=env, timeout=900, capture_output=True, text=True)
-
         if r.returncode != 0 and not (cmd[:1] == ["apt-get"] and "update" in cmd):
             raise RuntimeError(f"{mgr} install of '{generic}' failed: {(r.stderr or r.stdout)[-300:]}")
 
@@ -119,13 +128,10 @@ def _state_dir_ready() -> bool:
 
 
 def _make_state_dir() -> None:
-
-
     d = _state_dir()
     user = os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     cmds = [[*_sudo(), "mkdir", "-p", d]]
     if user:
-
         cmds.append([*_sudo(), "chown", "-R", user, d])
     cmds.append([*_sudo(), "chmod", "750", d])
     for cmd in cmds:
@@ -139,7 +145,6 @@ def _java_ok(min_major: int = 21) -> bool:
         return False
     try:
         out = _run(["java", "-version"], timeout=30).stderr or ""
-
         for tok in out.replace('"', " ").split():
             if tok[:1].isdigit():
                 return int(tok.split(".")[0]) >= min_major
@@ -171,18 +176,12 @@ def _essentials_present() -> bool:
 PREREQS: List[Prerequisite] = [
     Prerequisite("os-essentials", 10, _essentials_present,
                  lambda: _install("essentials")),
-
     Prerequisite("jre-21", 20, _java_ok,
                  lambda: _install("jre")),
-
     Prerequisite("python3", 30, lambda: _has("python3"),
                  lambda: _install("python3")),
-
-
     Prerequisite("container-runtime", 40, lambda: _has("docker"),
                  lambda: _install("docker"), required=False),
-
-
     Prerequisite("state-dir", 50, _state_dir_ready, _make_state_dir, required=False),
 ]
 

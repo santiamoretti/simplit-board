@@ -1,3 +1,10 @@
+"""Device authentication — mint and cache the device's cloud JWT.
+
+The Simplit token endpoint is NOT OAuth2: it takes a JSON ``{clientId, clientSecret}`` and returns
+``{"accessToken": "<RS256 JWT>"}`` (camelCase). The JWT's ``sub`` is the deviceId and ``agencyId`` is the org —
+that identity is what the gateway reads at registration and what the presence relay routes pushes to. We cache
+the token until ~60s before its ``exp`` claim. Mirrors the board's ServiceTokenProvider.
+"""
 from __future__ import annotations
 
 import base64

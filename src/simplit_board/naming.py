@@ -1,7 +1,12 @@
+"""Human-friendly device names, GCP-project-id style (e.g. ``ancient-binder-4821``).
+
+Uses ``coolname`` for the adjective-noun slug when available, with a small vendored fallback so a fresh
+board can always mint a name even before optional deps resolve. The name doubles as the device id, so it must
+be a stable, DNS-safe slug: lowercase, hyphen-separated, with a short numeric suffix for collision resistance.
+"""
 from __future__ import annotations
 
 import secrets
-
 
 _ADJ = [
     "ancient", "brave", "calm", "clever", "cosmic", "crimson", "dusky", "eager", "fabled", "gentle",

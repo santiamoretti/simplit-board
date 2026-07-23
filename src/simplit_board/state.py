@@ -1,3 +1,4 @@
+"""Durable device state (device.json). Written atomically so a power cut can never corrupt the identity."""
 from __future__ import annotations
 
 import json
@@ -16,7 +17,6 @@ class DeviceState:
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
     delivery_pubkey: Optional[str] = None
-
     current_version: Optional[str] = None
     extra: dict = field(default_factory=dict)
 
