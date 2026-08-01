@@ -1,0 +1,19 @@
+# Simplit Board agent — keeps `simplit-board up` running and reconnecting.
+# Install (adjust User and the venv path to your box):
+#   sudo cp packaging/simplit-board.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now simplit-board
+[Unit]
+Description=Simplit Board agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=orangepi
+Environment=SIMPLIT_STATE_DIR=/var/lib/simplit
+ExecStart=/home/orangepi/simplit-board/.venv/bin/simplit-board up
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
