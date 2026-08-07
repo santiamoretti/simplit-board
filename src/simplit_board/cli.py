@@ -343,7 +343,12 @@ def install_service(user: str | None) -> None:
         f"User={run_user}\n"
         f"Environment=SIMPLIT_STATE_DIR={state_dir}\n"
         f"ExecStart={exe} up\n"
-        "Restart=always\n"
+        # on-failure, NOT always. The agent is a one-shot kickstarter: once the board service exists it
+        # stands down and exits 0, and under Restart=always that clean exit became a restart every 5
+        # seconds forever — measured at 588 restarts on a provisioned board, filling the journal and
+        # hiding any failure that mattered. A crash still restarts; finishing the job does not. What
+        # keeps the appliance running from here is the board service's own Restart=always.
+        "Restart=on-failure\n"
         "RestartSec=5\n"
         # The agent's ONE job is to receive the first push, install the board service, and hand the
         # presence session over to it — so it exits, and systemd restarts it. Under the default
