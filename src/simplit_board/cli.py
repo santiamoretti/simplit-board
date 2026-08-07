@@ -251,6 +251,15 @@ def up() -> None:
         detail = supervisor.deploy(job)
         return {"boardId": st.name, "status": "deployed", "detail": detail}
 
+    # A board that has ALREADY been provisioned belongs to its board service, not to this agent. After a
+    # power cut systemd brings that service back (see Supervisor._install_boot_unit) and it takes the
+    # device's single presence session; an agent that also connected would fight it for the channel. So
+    # when the service is up, the agent stands down instead of announcing itself as an empty board.
+    if supervisor.boot_unit_active():
+        click.echo(f"board '{st.name}' already runs its service (systemd) — agent standing down. "
+                   "Re-pushes go straight to the board, which verifies and self-restarts.")
+        return
+
     tokens = TokenProvider(cfg.token_url, st.client_id or st.name, secret)
     presence = PresenceClient(cfg.presence_ws, tokens, st.name,
                               handler=handle_push if control_key else None, log=click.echo,
@@ -334,7 +343,14 @@ def install_service(user: str | None) -> None:
         f"Environment=SIMPLIT_STATE_DIR={state_dir}\n"
         f"ExecStart={exe} up\n"
         "Restart=always\n"
-        "RestartSec=5\n\n"
+        "RestartSec=5\n"
+        # The agent's ONE job is to receive the first push, install the board service, and hand the
+        # presence session over to it — so it exits, and systemd restarts it. Under the default
+        # KillMode=control-group that restart kills every process in the unit's cgroup, INCLUDING the
+        # board service the agent just started. Measured on a fresh board: the service booted
+        # completely (Tomcat up, registered, presence connected) and was killed 0.4s later, leaving a
+        # board that looked deployed and ran nothing. KillMode=process signals only the agent.
+        "KillMode=process\n\n"
         "[Install]\n"
         "WantedBy=multi-user.target\n"
     )

@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -195,6 +196,11 @@ class Supervisor:
             ["bash", str(wrapper)],
             stdout=log, stderr=subprocess.STDOUT, env=env, start_new_session=True,
         )
+        # Survive POWER LOSS. The detached wrapper above outlives this agent, but nothing outlives a
+        # reboot: measured on a fresh board, a power cycle brought back a registered, presence-connected
+        # agent and NO board service — an appliance that looks healthy and scans nothing. So the running
+        # jar is also handed to systemd, which owns it from the next boot on.
+        self._install_boot_unit(env)
 
         # Health: succeed only on Spring's real "Started …Application" line; fail fast on a run failure or exit.
         deadline = time.time() + grace_seconds
@@ -218,6 +224,62 @@ class Supervisor:
             self.version = version
             return f"deployed {version} (pid {self.proc.pid}, running)"
         raise DeployError("java did not report started within the grace window")
+
+    BOOT_UNIT = "simplit-board-service.service"
+
+    def _install_boot_unit(self, env: dict) -> None:
+        """Register the board service with systemd so a power cut cannot leave the appliance empty.
+
+        Best-effort by design: a board that cannot write a unit (no systemd, no sudo) still has the
+        running service the deploy just started — losing boot persistence must never fail a deploy that
+        otherwise worked. The unit runs the same wrapper the agent runs, with the same environment, so
+        there is one launch path and rc=88 self-updates keep working.
+        """
+        try:
+            wrapper = self.jar_dir / "run-board.sh"
+            keep = {k: v for k, v in env.items() if k.startswith("SIMPLIT_")}
+            lines = "\n".join(f"Environment={k}={v}" for k, v in sorted(keep.items()))
+            unit = (
+                "[Unit]\n"
+                "Description=Simplit board service\n"
+                "After=network-online.target\n"
+                "Wants=network-online.target\n\n"
+                "[Service]\n"
+                "Type=simple\n"
+                "User=root\n"
+                f"{lines}\n"
+                f"ExecStart=/bin/bash {wrapper}\n"
+                "Restart=always\n"
+                "RestartSec=10\n\n"
+                "[Install]\n"
+                "WantedBy=multi-user.target\n"
+            )
+            path = f"/etc/systemd/system/{self.BOOT_UNIT}"
+            sudo = [] if os.geteuid() == 0 else ["sudo", "-n"]
+            with tempfile.NamedTemporaryFile("w", suffix=".service", delete=False) as tf:
+                tf.write(unit)
+                tmp = tf.name
+            try:
+                subprocess.run([*sudo, "cp", tmp, path], check=True, timeout=30)
+            finally:
+                os.unlink(tmp)
+            subprocess.run([*sudo, "systemctl", "daemon-reload"], check=True, timeout=30)
+            # ENABLE only — starting it now would race the instance this deploy just launched. systemd
+            # takes over at the next boot, which is exactly the case that was broken.
+            subprocess.run([*sudo, "systemctl", "enable", self.BOOT_UNIT], check=True, timeout=30)
+        except Exception as e:  # noqa: BLE001 - boot persistence is best-effort, never fatal to a deploy
+            print(f"[deploy] warning: could not register the board service for boot ({e}) — "
+                  "it is running now but will NOT come back after a power cut")
+
+    def boot_unit_active(self) -> bool:
+        """Is the board service currently running under systemd? Used by the agent to stand down rather
+        than contend for the device's single presence session. False whenever we cannot tell."""
+        try:
+            r = subprocess.run(["systemctl", "is-active", self.BOOT_UNIT],
+                               capture_output=True, text=True, timeout=10)
+            return r.stdout.strip() == "active"
+        except Exception:  # noqa: BLE001 - no systemd / not permitted ⇒ behave as before
+            return False
 
     def _rollback(self) -> None:
         prev = self.jar_dir / "app.jar.previous"

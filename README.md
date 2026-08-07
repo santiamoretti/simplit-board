@@ -29,6 +29,19 @@ simplit-board status       # show local identity + deployed service version
 Identity is generated once and persisted under `SIMPLIT_STATE_DIR` (default `/var/lib/simplit`), written
 atomically so a power cut never mints a new device on reboot.
 
+## Surviving a power cut
+
+An appliance has to come back on its own. The first deploy therefore registers the Java service with systemd as
+`simplit-board-service` and enables it, so the board is running its software again the moment the machine boots
+— no agent, no operator, no re-push. Check it with `systemctl status simplit-board-service`.
+
+The agent is a kickstarter, not a supervisor: once that service is up, `simplit-board up` sees it and stands
+down rather than contending for the device's single presence session. Re-pushes go straight to the board, which
+verifies and restarts itself.
+
+Registering the unit needs root (or passwordless `sudo`). Without it the deploy still succeeds and the service
+still runs — but it prints a warning, and it will **not** come back after a power cut.
+
 ## Enrollment
 
 A device does **not** self-enroll anonymously. `register` generates the device's name + Ed25519 key and, if it
