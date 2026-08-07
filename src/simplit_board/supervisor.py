@@ -219,7 +219,12 @@ class Supervisor:
         # reboot: measured on a fresh board, a power cycle brought back a registered, presence-connected
         # agent and NO board service — an appliance that looks healthy and scans nothing. So the running
         # jar is also handed to systemd, which owns it from the next boot on.
-        self._install_boot_unit(env)
+        #
+        # The outcome rides back in the DEPLOY DETAIL, not just the log. This runs during a push from the
+        # cloud, so the agent's stdout goes nowhere anyone is looking; the operator is watching the Updates
+        # screen, and "deployed" with no caveat is how a board that will not survive a reboot passed for a
+        # healthy one on a fresh provision.
+        boot = self._install_boot_unit(env)
 
         # Health: succeed only on Spring's real "Started …Application" line; fail fast on a run failure or exit.
         deadline = time.time() + grace_seconds
@@ -235,18 +240,18 @@ class Supervisor:
                 raise DeployError(f"java failed to start. last log:\n{tail}")
             if _log_has(self.log_file, b"Started ") and _log_has(self.log_file, b"Application in "):
                 self.version = version
-                return f"deployed {version} (pid {self.proc.pid}, started)"
+                return f"deployed {version} (pid {self.proc.pid}, started){boot}"
             time.sleep(1.0)
 
         # No explicit "Started" but still alive past the grace window — treat as running (headless workloads).
         if self.proc.poll() is None:
             self.version = version
-            return f"deployed {version} (pid {self.proc.pid}, running)"
+            return f"deployed {version} (pid {self.proc.pid}, running){boot}"
         raise DeployError("java did not report started within the grace window")
 
     BOOT_UNIT = "simplit-board-service.service"
 
-    def _install_boot_unit(self, env: dict) -> None:
+    def _install_boot_unit(self, env: dict) -> str:
         """Register the board service with systemd so a power cut cannot leave the appliance empty.
 
         Best-effort by design: a board that cannot write a unit (no systemd, no sudo) still has the
@@ -286,9 +291,12 @@ class Supervisor:
             # ENABLE only — starting it now would race the instance this deploy just launched. systemd
             # takes over at the next boot, which is exactly the case that was broken.
             subprocess.run([*sudo, "systemctl", "enable", self.BOOT_UNIT], check=True, timeout=30)
+            return ""
         except Exception as e:  # noqa: BLE001 - boot persistence is best-effort, never fatal to a deploy
-            print(f"[deploy] warning: could not register the board service for boot ({e}) — "
-                  "it is running now but will NOT come back after a power cut")
+            msg = (f"could not register the board service for boot ({e}) — "
+                   "it is running now but will NOT come back after a power cut")
+            print(f"[deploy] warning: {msg}")
+            return f" — WARNING: {msg}"
 
     def boot_unit_active(self) -> bool:
         """Is the board service currently running under systemd? Used by the agent to stand down rather

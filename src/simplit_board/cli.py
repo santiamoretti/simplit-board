@@ -321,17 +321,25 @@ def _sudo() -> list[str]:
 
 
 @main.command("install-service")
-@click.option("--user", default=None, help="user to run the service as (default: SUDO_USER / current user)")
+@click.option("--user", default="root", help="user to run the service as (default: root — see below)")
 def install_service(user: str | None) -> None:
     """Install + enable a systemd service so `simplit-board up` runs on boot and reconnects on its own.
 
-    Detects this install's `simplit-board` executable, the operating user and the state dir, writes
+    Detects this install's `simplit-board` executable and the state dir, writes
     /etc/systemd/system/simplit-board.service, then daemon-reloads and enables+starts it.
+
+    Runs as ROOT by default. It used to inherit the invoking account (SUDO_USER), which looks tidier and
+    quietly broke the thing that matters: on the first deploy the agent registers the board service with
+    systemd so the appliance comes back after a power cut, and writing that unit needs root. A non-root
+    agent falls back to `sudo -n`, which on a stock image prompts for a password, fails, and prints a
+    warning nobody reads because the deploy came over the relay. Measured on a fresh provision: board
+    running, no boot unit, no error surfaced — an appliance one power cut away from silently doing
+    nothing. The board service itself already runs as root; the agent that installs it has to as well.
     """
     exe = shutil.which("simplit-board") or os.path.join(os.path.dirname(sys.executable), "simplit-board")
     if not os.path.exists(exe):
         raise click.ClickException(f"could not find the simplit-board executable ({exe}); install the package first")
-    run_user = user or os.environ.get("SUDO_USER") or os.environ.get("USER") or os.environ.get("LOGNAME") or "root"
+    run_user = user or "root"
     state_dir = os.environ.get("SIMPLIT_STATE_DIR", "/var/lib/simplit")
     unit = (
         "[Unit]\n"
