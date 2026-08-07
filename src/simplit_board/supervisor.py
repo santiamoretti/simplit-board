@@ -28,7 +28,8 @@ class Supervisor:
                  device_id: Optional[str] = None, device_secret: Optional[str] = None,
                  token_url: Optional[str] = None, presence_url: Optional[str] = None,
                  register_url: Optional[str] = None, delivery_pubkey: Optional[str] = None,
-                 control_pubkey: Optional[str] = None):
+                 control_pubkey: Optional[str] = None, flows_url: Optional[str] = None,
+                 gateway_url: Optional[str] = None, integrations_url: Optional[str] = None):
         self.jar_dir = jar_dir
         self.java_bin = java_bin
         self.baked_jar = baked_jar or os.environ.get("SIMPLIT_BOARD_JAR")
@@ -40,6 +41,11 @@ class Supervisor:
         self.presence_url = presence_url
         # The gateway /api/register URL — set so the board announces itself + heartbeats -> shows ONLINE while up.
         self.register_url = register_url
+        # Where the board reads its automation and delivers finished reports. See _launch: without these the
+        # appliance schedules nothing, and says nothing about it.
+        self.flows_url = flows_url
+        self.gateway_url = gateway_url
+        self.integrations_url = integrations_url
         # The build/delivery trust anchor the agent resolved (pinned in-band at enrollment). We hand this to the
         # Java board so it verifies its OWN future pushes against the SAME key — the agent only does the first one.
         self.delivery_pubkey = delivery_pubkey
@@ -161,6 +167,19 @@ class Supervisor:
         env["SIMPLIT_SIGNAL_ENABLED"] = "true"
         env["SIMPLIT_SELF_JAR"] = str(self.app_jar)
         env["SIMPLIT_JAVA_BIN"] = self.java_bin
+        # Scheduling ON. Everything a board does on its own — scheduled assessments, scheduled reports, the
+        # report-ready notification, keeping the IDS in step with its Live Monitor settings, and an operator's
+        # "Run now" — hangs off one flag that the board defaults to FALSE. An appliance that schedules nothing is
+        # not a deployment choice, it is the product not working, and it is invisible: the jobs sit in the UI
+        # looking configured and simply never fire. The three URLs go with it, since the board would otherwise
+        # look for its automation on its own localhost and quietly find none.
+        env.setdefault("SIMPLIT_FLOWS_ENABLED", "true")
+        if self.flows_url:
+            env.setdefault("SIMPLIT_FLOWS_URL", self.flows_url)
+        if self.gateway_url:
+            env.setdefault("SIMPLIT_GATEWAY_URL", self.gateway_url)
+        if self.integrations_url:
+            env.setdefault("SIMPLIT_INTEGRATIONS_URL", self.integrations_url)
         env.setdefault("SIMPLIT_ORG_ID", os.environ.get("SIMPLIT_ORG", "simplit"))
         # Hand the board its trust anchor so IT verifies future pushes (it owns presence after this install). Use
         # the anchor the agent resolved (pinned in-band at enrollment) FIRST — not just the environment — or a

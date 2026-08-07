@@ -234,7 +234,8 @@ def up() -> None:
     supervisor = Supervisor(cfg.jar_dir, device_id=st.name, device_secret=secret,
                             token_url=cfg.token_url, presence_url=cfg.presence_ws_url,
                             register_url=cfg.register_url, delivery_pubkey=delivery_pub_b64,
-                            control_pubkey=control_pub_b64)
+                            control_pubkey=control_pub_b64, flows_url=cfg.flows_url,
+                            gateway_url=cfg.gateway_url, integrations_url=cfg.integrations_url)
 
     def handle_artifact(manifest: dict, data: bytes) -> dict:
         # Bytes arrived + were already signature/hash-verified by the presence client. Run them, fetching nothing.

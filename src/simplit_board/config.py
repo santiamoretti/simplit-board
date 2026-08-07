@@ -17,6 +17,11 @@ class Config:
     domain: str
     auth_url: str
     gateway_url: str
+    # Where the board fetches its own automation from, and what it delivers finished reports through. The board
+    # defaults both to localhost, which on an appliance means "nothing scheduled ever runs", so the agent has to
+    # name them explicitly at launch.
+    flows_url: str
+    integrations_url: str
     control_url: str
     enrollment_url: str
     delivery_url: str
@@ -99,6 +104,8 @@ def load_config() -> Config:
         domain=dom,
         auth_url=os.environ.get("SIMPLIT_AUTH_URL", svc("auth")),
         gateway_url=os.environ.get("SIMPLIT_GATEWAY_URL", svc("cloud-gateway")),
+        flows_url=os.environ.get("SIMPLIT_FLOWS_URL", svc("flows")),
+        integrations_url=os.environ.get("SIMPLIT_INTEGRATIONS_URL", svc("integrations")),
         control_url=os.environ.get("SIMPLIT_CONTROL_URL", svc("control")),
         enrollment_url=os.environ.get("SIMPLIT_ENROLLMENT_URL", svc("enrollment")),
         delivery_url=os.environ.get("SIMPLIT_DELIVERY_URL", svc("delivery")),
