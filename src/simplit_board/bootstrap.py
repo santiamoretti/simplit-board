@@ -375,6 +375,44 @@ def _compose_ok() -> bool:
         return False
 
 
+# ── where the board installs its tools ────────────────────────────────────────────────────────────────────
+# The board service runs UNPRIVILEGED and lays its tools down here: the scanner's compose stack, the monitor's
+# config and rules, the report interpreter. Nothing created this directory for it. On an appliance built by
+# hand it happened to exist already, so the gap stayed invisible until a board was rebuilt from zero and every
+# component failed with AccessDeniedException on a path the log made look like a missing tool rather than a
+# missing directory (measured 2026-08-19, on the first clean bring-up we ever did).
+_TOOLS_DIR = "/opt/simplit"
+_TOOLS_SUBDIRS = ["openvas", "suricata", "pysandbox"]
+
+
+def _tools_dir_ready() -> bool:
+    if not os.path.isdir(_TOOLS_DIR):
+        return False
+    return all(os.path.isdir(os.path.join(_TOOLS_DIR, d)) and os.access(os.path.join(_TOOLS_DIR, d), os.W_OK)
+               for d in _TOOLS_SUBDIRS)
+
+
+def _make_tools_dir() -> None:
+    """Create the tool directories owned by the OPERATING user, not by root.
+
+    Owned rather than merely present: the parent is root's on most images, and a board that cannot create a
+    directory it is about to fill reports the failure as a broken tool. Existing directories are left alone —
+    an appliance already carrying an installed scanner must not have its ownership rewritten underneath it.
+    """
+    user = _operating_user()
+    sudo = _sudo()
+    subprocess.run([*sudo, "mkdir", "-p", _TOOLS_DIR], capture_output=True, timeout=60)
+    for d in _TOOLS_SUBDIRS:
+        path = os.path.join(_TOOLS_DIR, d)
+        if os.path.isdir(path):
+            continue
+        cmd = ([*sudo, "install", "-d", "-o", user, "-g", user, path] if user
+               else [*sudo, "mkdir", "-p", path])
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise RuntimeError(f"could not create {path}: {(r.stderr or '')[-200:]}")
+
+
 def _java_ok(min_major: int = 21) -> bool:
     if not _has("java"):
         return False
@@ -442,6 +480,9 @@ PREREQS: List[Prerequisite] = [
     # run without sudo and the identity is never owned by root. Not required — a custom SIMPLIT_STATE_DIR that
     # is already writable just passes the check.
     Prerequisite("state-dir", 50, _state_dir_ready, _make_state_dir, required=False),
+    # Where the board lays its tools down. Same reasoning as the state dir above, and missing for the same
+    # reason nobody noticed: on a hand-built appliance the directories were already there.
+    Prerequisite("tools-dir", 55, _tools_dir_ready, _make_tools_dir, required=False),
 ]
 
 
