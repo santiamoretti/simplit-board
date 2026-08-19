@@ -97,6 +97,12 @@ class Supervisor:
         from . import bootstrap
         if not bootstrap.java_ready():
             raise DeployError("no Java runtime — run `simplit-board bootstrap` to install prerequisites first")
+        # Compose is NOT fatal to the deploy — the board runs, serves presence and reports without it — but the
+        # scanner and the monitor cannot be installed, so say it here, once, in the operator's own terminal.
+        # Silence at this point is what let a board deploy cleanly and then be unable to install any tool.
+        if not bootstrap.compose_ready():
+            print("[warn] docker compose is not available — the board will start, but it cannot install the "
+                  "scanner or the network monitor. Run `simplit-board bootstrap` to install it.", flush=True)
 
     def deploy(self, job: dict[str, Any], grace_seconds: float = 35.0) -> str:
         """Deploy from a job reference (legacy: fetch imageRef URL or use a baked jar)."""
@@ -124,11 +130,18 @@ class Supervisor:
         self._stop()
 
         # Run the board service AS the device: it takes over the presence data channel (reports/findings) once
-        # up, so it must have the device identity + the live cloud URLs. Registration/provisioning stay off (the
-        # agent already registered; tools aren't provisioned in the emulator). Store at a writable path.
+        # up, so it must have the device identity + the live cloud URLs. Registration stays off here (the agent
+        # already registered; the register_url below turns it back on). Store at a writable path.
         env = dict(os.environ)
         env.setdefault("SIMPLIT_REGISTER_ENABLED", "false")
-        env.setdefault("SIMPLIT_PROVISION_ENABLED", "false")
+        # PROVISIONING ON. This defaulted to false — an emulator-only assumption ("tools aren't provisioned in
+        # the emulator") applied to every appliance, and then baked into the systemd unit below, so it survived
+        # every reboot. The consequence is not a board that provisions late: it is a board that never installs
+        # its scanner or its monitor while the portal cheerfully accepts scans for it, which is how the Fibase
+        # appliance ended up with OpenVAS and Suricata installed BY HAND (2026-08-18). Same shape as
+        # SIMPLIT_FLOWS_ENABLED below: on by default, and an emulator that genuinely wants no tools sets
+        # SIMPLIT_PROVISION_ENABLED=false in its environment, which setdefault honours.
+        env.setdefault("SIMPLIT_PROVISION_ENABLED", "true")
         env["SIMPLIT_PRESENCE_ENABLED"] = "true"          # the Java owns the report/query channel
         env.setdefault("SIMPLIT_STORE_PATH", str(self.jar_dir / "board.db"))
         env.setdefault("SIMPLIT_REPORT_EXEC", "python3 /opt/simplit/pysandbox/worker.py")
