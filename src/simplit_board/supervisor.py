@@ -19,6 +19,38 @@ from typing import Any, Optional
 import requests
 
 
+BOOT_UNIT_NAME = "simplit-board-service.service"
+
+
+def boot_unit_text(wrapper, env_file) -> str:
+    """The systemd unit, as text — one definition, shared by the two places that install it.
+
+    It reads its environment from a FILE rather than carrying Environment= lines, and that is the whole
+    design: the environment changes on every deploy (new jar path, refreshed credential) while the unit
+    never does. So the unit can be installed ONCE, interactively, by an operator who can type a sudo
+    password during `bootstrap`, and every unattended deploy afterwards only rewrites the file it points
+    at — no privilege, no stale env baked into a unit nobody re-writes.
+
+    The leading '-' makes the file optional to systemd: a board bootstrapped before its first deploy has a
+    unit and no environment yet, and must fail-and-retry rather than refuse to exist.
+    """
+    return (
+        "[Unit]\n"
+        "Description=Simplit board service\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n\n"
+        "[Service]\n"
+        "Type=simple\n"
+        "User=root\n"
+        f"EnvironmentFile=-{env_file}\n"
+        f"ExecStart=/bin/bash {wrapper}\n"
+        "Restart=always\n"
+        "RestartSec=10\n\n"
+        "[Install]\n"
+        "WantedBy=multi-user.target\n"
+    )
+
+
 class DeployError(RuntimeError):
     pass
 
@@ -264,6 +296,25 @@ class Supervisor:
 
     BOOT_UNIT = "simplit-board-service.service"
 
+    @property
+    def env_file(self):
+        return self.jar_dir / "board.env"
+
+    def _write_env_file(self, env: dict) -> None:
+        """The launch environment, on disk, for systemd to read at boot.
+
+        This is the half of boot persistence that needs NO privilege — the deploy owns this directory — and
+        splitting it out is what makes the other half a one-time interactive step instead of a permanent
+        passwordless-sudo grant. It carries the device credential, so it is written 0600 and replaced
+        atomically: a half-written env file would launch a board with a truncated secret.
+        """
+        keep = {k: v for k, v in env.items() if k.startswith("SIMPLIT_")}
+        body = "".join(f"{k}={v}\n" for k, v in sorted(keep.items()))
+        tmp = self.env_file.with_suffix(".env.tmp")
+        tmp.write_text(body)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.env_file)
+
     def _install_boot_unit(self, env: dict) -> str:
         """Register the board service with systemd so a power cut cannot leave the appliance empty.
 
@@ -273,24 +324,12 @@ class Supervisor:
         there is one launch path and rc=88 self-updates keep working.
         """
         try:
+            # Always refresh the environment file — it is the launch truth and costs no privilege, so it must
+            # be current even when the unit itself cannot be (re)written.
+            self._write_env_file(env)
             wrapper = self.jar_dir / "run-board.sh"
             keep = {k: v for k, v in env.items() if k.startswith("SIMPLIT_")}
-            lines = "\n".join(f"Environment={k}={v}" for k, v in sorted(keep.items()))
-            unit = (
-                "[Unit]\n"
-                "Description=Simplit board service\n"
-                "After=network-online.target\n"
-                "Wants=network-online.target\n\n"
-                "[Service]\n"
-                "Type=simple\n"
-                "User=root\n"
-                f"{lines}\n"
-                f"ExecStart=/bin/bash {wrapper}\n"
-                "Restart=always\n"
-                "RestartSec=10\n\n"
-                "[Install]\n"
-                "WantedBy=multi-user.target\n"
-            )
+            unit = boot_unit_text(wrapper, self.env_file)
             path = f"/etc/systemd/system/{self.BOOT_UNIT}"
             sudo = [] if os.geteuid() == 0 else ["sudo", "-n"]
             with tempfile.NamedTemporaryFile("w", suffix=".service", delete=False) as tf:
@@ -306,8 +345,10 @@ class Supervisor:
             subprocess.run([*sudo, "systemctl", "enable", self.BOOT_UNIT], check=True, timeout=30)
             return ""
         except Exception as e:  # noqa: BLE001 - boot persistence is best-effort, never fatal to a deploy
-            msg = (f"could not register the board service for boot ({e}) — "
-                   "it is running now but will NOT come back after a power cut")
+            msg = (f"could not register the board service for boot ({e}) — it is running now but will NOT "
+                   "come back after a power cut. The launch environment WAS written; run "
+                   "`simplit-board bootstrap` on the appliance (it can ask for the password this cannot) "
+                   "to install the unit once, and every future deploy is covered")
             print(f"[deploy] warning: {msg}")
             return f" — WARNING: {msg}"
 

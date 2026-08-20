@@ -15,8 +15,12 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, List
+
+from . import supervisor
 
 
 def _run(cmd: List[str], timeout: float = 600.0) -> subprocess.CompletedProcess:
@@ -448,6 +452,42 @@ def _essentials_present() -> bool:
     return all(_has(b) for b in ("curl", "ps"))
 
 
+# ── boot persistence: the ONE step that needs root, done while an operator is here to allow it ──────────
+#
+# The software deploy arrives over presence with nobody watching, so it escalates with `sudo -n` — and on a
+# stock image the operating user's sudo asks for a password, so it fails and the appliance comes back from a
+# power cut with nothing running. The deploy says so, but as a warning at the end of a wall of success, which
+# is how it went unnoticed on a customer board.
+#
+# The fix is not a standing privilege, it is doing the privileged half HERE: bootstrap runs interactively and
+# can ask for the password once. The unit it writes reads its environment from a FILE the deploy owns, so the
+# unit never needs rewriting — every future deploy just refreshes that file and boot persistence keeps working
+# with no root at all.
+def _boot_unit_installed() -> bool:
+    if os.name != "posix":
+        return True   # nothing to register off a POSIX host; bootstrap there only reports
+    return Path("/etc/systemd/system").joinpath(supervisor.BOOT_UNIT_NAME).exists()
+
+
+def _install_boot_unit() -> None:
+    if not _has("systemctl"):
+        raise RuntimeError("no systemd on this host — nothing to register")
+    jar_dir = Path(os.environ.get("SIMPLIT_SERVICE_DIR", "/var/lib/simplit/service"))
+    unit = supervisor.boot_unit_text(jar_dir / "run-board.sh", jar_dir / "board.env")
+    sudo = _sudo()
+    with tempfile.NamedTemporaryFile("w", suffix=".service", delete=False) as tf:
+        tf.write(unit)
+        tmp = tf.name
+    try:
+        run([*sudo, "cp", tmp, f"/etc/systemd/system/{supervisor.BOOT_UNIT_NAME}"])
+        run([*sudo, "systemctl", "daemon-reload"])
+        # ENABLE, never start: there is no software on the board yet at bootstrap time, and starting a unit
+        # whose jar does not exist only produces a restart loop in the journal for the operator to worry about.
+        run([*sudo, "systemctl", "enable", supervisor.BOOT_UNIT_NAME])
+    finally:
+        os.unlink(tmp)
+
+
 PREREQS: List[Prerequisite] = [
     Prerequisite("os-essentials", 10, _essentials_present,
                  lambda: _install("essentials")),
@@ -483,6 +523,8 @@ PREREQS: List[Prerequisite] = [
     # Where the board lays its tools down. Same reasoning as the state dir above, and missing for the same
     # reason nobody noticed: on a hand-built appliance the directories were already there.
     Prerequisite("tools-dir", 55, _tools_dir_ready, _make_tools_dir, required=False),
+    # Boot persistence. Last, because it describes where the software WILL live rather than installing any.
+    Prerequisite("boot-unit", 60, _boot_unit_installed, _install_boot_unit, required=False),
 ]
 
 
