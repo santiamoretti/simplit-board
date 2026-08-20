@@ -27,7 +27,7 @@ Four steps, in order. Each one is idempotent — re-running it on a board that i
 
 ```
 sudo simplit-board bootstrap      # 1. OS prerequisites (needs root)
-simplit-board register            # 2. sign in as an operator; mints this device
+simplit-board register            # 2. sign in as an operator; names + mints this device
 sudo simplit-board install-service # 3. start on boot
 simplit-board up                  # 4. online, waiting for the software push
 ```
@@ -47,8 +47,16 @@ enrollment service checks you hold the `enrollDevice` permission, then mints thi
 creates its resource under your organization. Nothing is provisioned by hand, and the trust anchors for
 future updates are pinned from that same authenticated response.
 
-**3. `install-service`** registers the agent with systemd so the board comes back by itself. The first push
-additionally registers the Java service the same way — see below.
+It also asks what to **call** this board — a name people will recognise in the console, like
+`Redacción, piso 3`. Pass it with `--name` to skip the prompt, or leave it blank: the name is cloud-side
+metadata, so it can be set or changed later from the platform without ever touching the appliance again. The
+generated id stays the board's identity regardless.
+
+You are asked where to place it, too. That placement decides which organization the board **belongs** to —
+it is read from the tree, not from who ran the command — so a partner enrolling a board into a customer's
+subdivision produces a board that belongs to the customer.
+
+**3. `install-service`** registers the agent with systemd so the board comes back by itself.
 
 **4. `up`** holds the device's presence session and waits. A fresh board is genuinely empty until an operator
 pushes to it; there is no pre-loaded software.
@@ -65,17 +73,19 @@ atomically so a power cut never mints a new device on reboot.
 
 ## Surviving a power cut
 
-An appliance has to come back on its own. The first deploy therefore registers the Java service with systemd as
-`simplit-board-service` and enables it, so the board is running its software again the moment the machine boots
-— no agent, no operator, no re-push. Check it with `systemctl status simplit-board-service`.
+An appliance has to come back on its own. `bootstrap` therefore registers the Java service with systemd as
+`simplit-board-service` and enables it, so the board runs its software again the moment the machine boots — no
+agent, no operator, no re-push. Check it with `systemctl status simplit-board-service`.
+
+Writing that unit needs root, which is exactly why it happens during `bootstrap`: that is the one step an
+operator runs by hand and can authorise. Everything after it is unprivileged. The unit does not carry the
+board's settings — it reads them from `board.env` next to the jar, which the service rewrites every time it
+starts. So the settings change with every deploy while the unit never has to, and no software update ever
+needs root again.
 
 The agent is a kickstarter, not a supervisor: once that service is up, `simplit-board up` sees it and stands
 down rather than contending for the device's single presence session. Re-pushes go straight to the board, which
 verifies and restarts itself.
-
-Registering that unit needs root, and the deploy reaches for `sudo -n` (non-interactive). On a box where the
-board's user has no passwordless sudo the deploy still succeeds and the service still runs — but it prints a
-warning, and the board will **not** come back after a power cut. See the troubleshooting entry below.
 
 ## Troubleshooting
 
@@ -115,8 +125,12 @@ so the board moved the scanner to a free one rather than failing. Ask docker whe
 `docker port simplit-openvasd-openvasd-1`.
 
 **The board does not come back after a reboot.** `systemctl is-enabled simplit-board simplit-board-service`
-should print `enabled` twice. If the second is missing, the deploy could not write its unit for lack of
-passwordless sudo — grant it, or re-run the deploy from a session that has root.
+should print `enabled` twice. If the second is missing, `bootstrap` never got to install it — re-run
+`sudo simplit-board bootstrap`, which is idempotent and will only do the step that is absent.
+
+If the unit is enabled and the board still comes back empty, check that `board.env` exists next to the jar
+(`/var/lib/simplit/service/board.env`) and is not empty. The service writes it on every start, so an absent
+file means the service has not run since the agent was upgraded — push the software once and it appears.
 
 **Two boards appear to be running at once.** `pgrep -af app.jar` should show exactly one. A stray older
 process holds a second presence session, and the device's replies then go to whichever one asked; kill the
