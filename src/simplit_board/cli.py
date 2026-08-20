@@ -125,8 +125,11 @@ def _complete_login(cfg, res: dict, mfa_code: str | None) -> str:
 @click.option("--email", default=None, help="operator email (prompted if omitted)")
 @click.option("--password", default=None, help="operator password (prompted if omitted; use the prompt, don't put it in shell history)")
 @click.option("--subdivision", default=None, help="place the board under this subdivision (id or name); prompts if omitted")
+@click.option("--name", "display_name", default=None,
+              help="a friendly name for this board, shown in the console (e.g. 'Redacción piso 3'); prompts if omitted")
 @click.option("--mfa-code", default=None, help="2FA code, if your account has it (prompted if omitted)")
-def register(email: str | None, password: str | None, subdivision: str | None, mfa_code: str | None) -> None:
+def register(email: str | None, password: str | None, subdivision: str | None, display_name: str | None,
+             mfa_code: str | None) -> None:
     """Enrol this device by signing in as an operator.
 
     You are prompted for your SimplitSecurity email + password. That sign-in is the authorization: the
@@ -149,8 +152,14 @@ def register(email: str | None, password: str | None, subdivision: str | None, m
             login_res = registrar.login(cfg.login_url, email.strip(), password)
             op_token = _complete_login(cfg, login_res, mfa_code)
             parent = _choose_placement(cfg, op_token, subdivision)
+            # The friendly name: what the console shows instead of the random id. Enter for none — it can
+            # always be set or changed later from the platform, without touching this board.
+            if display_name is None:
+                display_name = click.prompt(
+                    "  a name for this board (shown in the console; Enter to skip)",
+                    default="", show_default=False).strip() or None
             result = registrar.enroll(cfg.enroll_url, op_token, st.name, st.public_key or "",
-                                      parent_resource_id=parent)
+                                      parent_resource_id=parent, display_name=display_name)
         except registrar.RegistrationError as e:
             click.echo(f"\nenrollment failed: {e}", err=True)
             sys.exit(2)

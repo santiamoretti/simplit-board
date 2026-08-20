@@ -127,7 +127,8 @@ def list_targets(targets_url: str, operator_token: str, timeout: float = 45.0, a
 
 
 def enroll(enroll_url: str, operator_token: str, device_name: str, device_pub_b64: str = "",
-           parent_resource_id: str | None = None, timeout: float = 60.0, attempts: int = 6) -> dict:
+           parent_resource_id: str | None = None, display_name: str | None = None,
+           timeout: float = 60.0, attempts: int = 6) -> dict:
     """Enrol the device via the engine-gated enrollment service. Returns {clientId, clientSecret, org,
     signingPubkey} — signingPubkey being the board's code-signing trust anchor, delivered in-band.
 
@@ -142,6 +143,10 @@ def enroll(enroll_url: str, operator_token: str, device_name: str, device_pub_b6
     body = {"deviceName": device_name, "devicePubB64": device_pub_b64}
     if parent_resource_id:
         body["parentResourceId"] = parent_resource_id
+    if display_name:
+        # What people will CALL the board in the console. Optional, changeable later from the cloud side —
+        # the device id stays the stable identity, so a rename never touches this box again.
+        body["displayName"] = display_name
     for i in range(attempts):
         try:
             resp = requests.post(
