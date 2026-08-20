@@ -475,15 +475,21 @@ def _install_boot_unit() -> None:
     jar_dir = Path(os.environ.get("SIMPLIT_SERVICE_DIR", "/var/lib/simplit/service"))
     unit = supervisor.boot_unit_text(jar_dir / "run-board.sh", jar_dir / "board.env")
     sudo = _sudo()
+
+    def sh(cmd):
+        r = subprocess.run(cmd, capture_output=True, timeout=120)
+        if r.returncode != 0:
+            raise RuntimeError(" ".join(cmd) + " -> " + (r.stderr or r.stdout).decode(errors="replace")[:200])
+
     with tempfile.NamedTemporaryFile("w", suffix=".service", delete=False) as tf:
         tf.write(unit)
         tmp = tf.name
     try:
-        run([*sudo, "cp", tmp, f"/etc/systemd/system/{supervisor.BOOT_UNIT_NAME}"])
-        run([*sudo, "systemctl", "daemon-reload"])
+        sh([*sudo, "cp", tmp, f"/etc/systemd/system/{supervisor.BOOT_UNIT_NAME}"])
+        sh([*sudo, "systemctl", "daemon-reload"])
         # ENABLE, never start: there is no software on the board yet at bootstrap time, and starting a unit
         # whose jar does not exist only produces a restart loop in the journal for the operator to worry about.
-        run([*sudo, "systemctl", "enable", supervisor.BOOT_UNIT_NAME])
+        sh([*sudo, "systemctl", "enable", supervisor.BOOT_UNIT_NAME])
     finally:
         os.unlink(tmp)
 
