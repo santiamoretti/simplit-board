@@ -249,6 +249,13 @@ class Supervisor:
         wrapper = self.jar_dir / "run-board.sh"
         wrapper.write_text(
             "#!/bin/bash\n"
+            "# Persist the environment we were launched with, for systemd to read at the next boot. Doing it\n"
+            "# HERE rather than at install time is what makes it reliable: a board whose service already owns\n"
+            "# presence receives its updates from the cloud directly and never runs the agent's install path\n"
+            "# again, so an env file written only there is never written on the boards that already exist.\n"
+            "# Idempotent — a systemd-launched run rewrites what it just read. 0600: it holds the credential.\n"
+            'ENVF="$(dirname "$0")/board.env"\n'
+            "(umask 077; env | grep '^SIMPLIT_' > \"$ENVF.tmp\" && mv \"$ENVF.tmp\" \"$ENVF\")\n"
             "while :; do\n"
             '  "${SIMPLIT_JAVA_BIN:-java}" -jar "$SIMPLIT_SELF_JAR"\n'
             "  rc=$?\n"
@@ -300,21 +307,6 @@ class Supervisor:
     def env_file(self):
         return self.jar_dir / "board.env"
 
-    def _write_env_file(self, env: dict) -> None:
-        """The launch environment, on disk, for systemd to read at boot.
-
-        This is the half of boot persistence that needs NO privilege — the deploy owns this directory — and
-        splitting it out is what makes the other half a one-time interactive step instead of a permanent
-        passwordless-sudo grant. It carries the device credential, so it is written 0600 and replaced
-        atomically: a half-written env file would launch a board with a truncated secret.
-        """
-        keep = {k: v for k, v in env.items() if k.startswith("SIMPLIT_")}
-        body = "".join(f"{k}={v}\n" for k, v in sorted(keep.items()))
-        tmp = self.env_file.with_suffix(".env.tmp")
-        tmp.write_text(body)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, self.env_file)
-
     def _install_boot_unit(self, env: dict) -> str:
         """Register the board service with systemd so a power cut cannot leave the appliance empty.
 
@@ -324,9 +316,6 @@ class Supervisor:
         there is one launch path and rc=88 self-updates keep working.
         """
         try:
-            # Always refresh the environment file — it is the launch truth and costs no privilege, so it must
-            # be current even when the unit itself cannot be (re)written.
-            self._write_env_file(env)
             wrapper = self.jar_dir / "run-board.sh"
             keep = {k: v for k, v in env.items() if k.startswith("SIMPLIT_")}
             unit = boot_unit_text(wrapper, self.env_file)
