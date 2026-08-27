@@ -134,7 +134,36 @@ file means the service has not run since the agent was upgraded — push the sof
 
 **Two boards appear to be running at once.** `pgrep -af app.jar` should show exactly one. A stray older
 process holds a second presence session, and the device's replies then go to whichever one asked; kill the
-older PID.
+older PID. Recent board builds refuse this state at birth: a second instance exits immediately with a message
+naming the PID that already holds the store's lock file (`board.db.lock`), so on a current build "two boards"
+can only mean the OLD build is the survivor — which is itself the diagnosis.
+
+**You launched the board by hand, and now `systemctl restart` "does nothing".** A board started from an SSH
+session belongs to that session, not to systemd — so `systemctl restart simplit-board-service` stops and
+starts *systemd's* instance while the hand-launched one keeps running, keeps the presence session, and
+ignores every restart forever. This exact state ran undiagnosed on a lab appliance for two days: the console
+showed the board online the whole time. If you must run it by hand for debugging, stop the unit first
+(`sudo systemctl stop simplit-board-service`) and start the unit again when you are done. Recent builds print
+a warning at the top of the log when they detect a hand launch beside an installed unit, and refuse to run
+at all if another instance already holds the store.
+
+**The board shows ONLINE in the console but ignores every command and push.** The "online" light is the HTTP
+heartbeat; commands ride a separate WebSocket (the presence session), and the two can fail independently. On
+older builds, a connection the network killed abruptly (a reset, not a clean close) silenced the command
+channel *permanently* while the heartbeat kept the console green — the only trace being a single
+`presence socket error` line in `/var/lib/simplit/service/service.log` with no reconnection after it. Current
+builds reconnect on every way the socket can die, detect the half-open case with a pong deadline, and log
+`command channel is DOWN` every minute until it is back — so on a current build this state announces itself.
+On an older one: `sudo systemctl restart simplit-board-service` restores the channel; then update the board.
+
+**A wiped board is a NEW device.** The identity lives in `/var/lib/simplit`; delete that directory and the
+next `register` mints a fresh name and a fresh credential. The old device does not disappear on its own — it
+lingers in the console as an offline board until an operator un-enrols it. Wipe, re-register, then remove the
+old entry, in that order, and expect scans/reports/settings scoped to the old name to stay with the old name.
+
+**A `systemctl status` or `journalctl` left open over SSH.** Both page their output; over a dropped SSH
+session the pager never exits, and the orphaned processes accumulate (three of them sat wedged on a lab
+appliance for two days). In scripts and remote shells, pass `--no-pager`.
 
 ## Configuration (env)
 
