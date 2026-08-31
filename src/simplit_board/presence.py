@@ -60,6 +60,7 @@ class PresenceClient:
         self._pending: dict[str, dict] = {}          # deployId -> {manifest, chunks:{seq:bytes}, authentic:bool}
         self._stop = False
         self._done = False                           # set once we've yielded the session after a deploy
+        self._displaced = False                      # another client took this device's one session
         self._app: Optional[websocket.WebSocketApp] = None
 
     def stop(self) -> None:
@@ -93,6 +94,11 @@ class PresenceClient:
                 self._log(f"[presence] error: {e}")
             if self._stop or self._done:
                 break
+            if self._displaced:
+                self._log("[presence] another client took this device's session — the board service owns it "
+                          "now, so this agent is standing down instead of fighting for the channel.")
+                self._done = True
+                break
             # If the session lived a healthy while, recover instantly; otherwise back off a little (capped low)
             # so a flaky relay doesn't turn into a tight loop, but the board still comes back fast.
             if time.monotonic() - started >= HEALTHY_SECS:
@@ -110,7 +116,16 @@ class PresenceClient:
 
     def _on_close(self, _app, status_code, msg) -> None:
         # run_forever returns right after this; run_forever()'s loop decides whether to reconnect.
-        pass
+        #
+        # A NORMAL (1000) close from the relay is not a network problem — it is the relay telling us that
+        # another client claimed this device's ONE session, which on an appliance means the board service
+        # took over. That is the handover, and the only correct answer is to stand down. Reconnecting turns
+        # it into a fight: both sides bounce each other every few seconds forever, and every command that
+        # lands on this agent is silently discarded because it only understands deploy frames. Measured on
+        # a live appliance 2026-08-28: ~10 reconnects/min for hours, half the operator's commands lost.
+        # Abnormal closes (1006) and policy closes (1008) are NOT this — those we retry as before.
+        if status_code == 1000:
+            self._displaced = True
 
     def _on_message(self, _app, raw) -> None:
         if not raw:
