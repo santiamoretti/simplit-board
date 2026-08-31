@@ -21,8 +21,10 @@ wins and its close is session-guarded, so this handoff is race-free.
 from __future__ import annotations
 
 import base64
+import codecs
 import hashlib
 import json
+import re
 import time
 from typing import Callable, Optional
 
@@ -113,6 +115,20 @@ class PresenceClient:
 
     def _on_error(self, _app, err) -> None:
         self._log(f"[presence] connection error: {err}")
+        # Some websocket-client versions never hand the relay's close code to on_close: the CLOSE frame
+        # surfaces HERE, as a protocol error whose message carries the raw frame ("fin=1 opcode=8
+        # data=b'\x03\xe8'"). The first two payload bytes are the big-endian close code. Missing them is
+        # how an agent with the standdown logic still fought a board that had rightfully taken the
+        # channel (measured live 2026-08-31: displace/reconnect every ~5s with on_close given None).
+        # 1000 = displaced, stand down; anything else (1008 stale token, 1006 abnormal) retries as before.
+        m = re.search(r"opcode=8.*?data=b'(.*)'", str(err))
+        if m:
+            try:
+                payload = codecs.decode(m.group(1), "unicode_escape").encode("latin-1")
+                if len(payload) >= 2 and int.from_bytes(payload[:2], "big") == 1000:
+                    self._displaced = True
+            except Exception:  # noqa: BLE001
+                pass
 
     def _on_close(self, _app, status_code, msg) -> None:
         # run_forever returns right after this; run_forever()'s loop decides whether to reconnect.

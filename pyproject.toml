@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simplit-board"
-version = "0.3.3"
+version = "0.3.4"
 description = "SimplitSecurity board agent — registers the appliance and receives/verifies/deploys signed Java service updates over the presence relay."
 requires-python = ">=3.9"
 dependencies = [
